@@ -1,0 +1,33 @@
+# Qt Creator
+CMakeLists.txt.user
+*.user
+.qtcreator/
+.qtc_clangd/
+
+# 构建产物
+build/
+build-*/
+CMakeCache.txt
+CMakeFiles/
+*.ninja
+.ninja_deps
+.ninja_log
+Testing/
+*_autogen/
+moc_*.cpp
+ui_*.h
+qrc_*.cpp
+
+# 二进制
+*.obj
+*.exe
+*.dll
+*.lib
+*.ilk
+*.pdb
+*.exp
+
+# 备份与系统
+*.bak*
+.DS_Store
+Thumbs.db
