@@ -162,7 +162,7 @@ int main(int argc, char* argv[])
         }
     });
     int Size=20;//字号初始化
-    QFont defaultFont = label->font();
+    QFont defaultFont=label->font();
     defaultFont.setPointSize(Size);
     label->setFont(defaultFont);
     Size_Input->setText(QString::number(Size));
@@ -202,21 +202,53 @@ int main(int argc, char* argv[])
     auto LoadSetting=[&]()//读取用户设置
     {
         QFile configFile(FilePath);
-        if(!configFile.exists())return;//无配置json文件
-        if(!configFile.open(QIODevice::ReadOnly))return;//只读打开失败
+        if(!configFile.exists())//无配置json文件
+        {
+            qDebug()<<"无对应配置文件";
+            return;
+        }
+        if(!configFile.open(QIODevice::ReadOnly))//只读打开失败
+        {
+            qDebug()<<"只读打开失败"<<configFile.errorString();
+            return;
+        }
         QByteArray Byte=configFile.readAll();
-        if(configFile.error()!=QFileDevice::NoError)return;//打开错误
+        if(configFile.error()!=QFileDevice::NoError)//打开失败
+        {
+            qDebug()<<"读取失败"<<configFile.errorString();
+            return;
+        }
         QJsonParseError ParseError;
         QJsonDocument document=QJsonDocument::fromJson(Byte,&ParseError);
-        if(ParseError.error!=QJsonParseError::NoError)return;//解析json错误
-        if(!document.isObject())return;
+        if(ParseError.error!=QJsonParseError::NoError)//解析json错误
+        {
+            qDebug()<<"json解析失败"<<ParseError.errorString();
+            return;
+        }
+        if(!document.isObject())
+        {
+            qDebug()<<"对象错误";
+            return;
+        }
         QJsonObject Object=document.object();
         QJsonValue versionValue=Object.value("Version");
-        if(!versionValue.isDouble() || versionValue.toDouble()!=1)return;//字体颜色格式检查
+        if(!versionValue.isDouble() || versionValue.toDouble()!=1)//字体颜色格式检查
+        {
+            qDebug()<<"版本错误";
+            return;
+        }
         QJsonValue fontValue=Object.value("Font");
-        if(!fontValue.isString()) return;
+        if(!fontValue.isString())
+        {
+            qDebug()<<"字体非字符串";
+            return;
+        }
         QJsonValue colorValue=Object.value("Color");
-        if(!colorValue.isString())return;
+        if(!colorValue.isString())
+        {
+            qDebug()<<"颜色错误";
+            return;
+        }
         QFont Fontnew=label->font();
         bool fontchange=Fontnew.fromString(fontValue.toString());
         if(fontchange && Fontnew.pointSize()>=8 && Fontnew.pointSize()<=96)//字号大小，写入成功检查
@@ -225,9 +257,8 @@ int main(int argc, char* argv[])
             Size=Fontnew.pointSize();
             Size_Input->setText(QString::number(Fontnew.pointSize()));
         }
-            else Size=20,Size_Input->setText(QString::number(20));//默认设定
         QColor colornew(colorValue.toString());
-        if(colornew.isValid())//颜色写入检查
+        if(colornew.isValid())//颜色检查
         {
             QPalette setcolor=label->palette();
             setcolor.setColor(QPalette::WindowText,colornew);
