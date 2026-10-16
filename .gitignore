@@ -31,3 +31,4 @@ qrc_*.cpp
 *.bak*
 .DS_Store
 Thumbs.db
+*.autosave
