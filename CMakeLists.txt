@@ -23,6 +23,7 @@ if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
     qt_add_executable(untitled1
         MANUAL_FINALIZATION
         ${PROJECT_SOURCES}
+        main.h
     )
 # Define target properties for Android with Qt 6 as:
 #    set_property(TARGET untitled1 APPEND PROPERTY QT_ANDROID_PACKAGE_SOURCE_DIR
@@ -67,44 +68,6 @@ install(TARGETS untitled1
 
 if(QT_VERSION_MAJOR EQUAL 6)
     qt_finalize_executable(untitled1)
-endif()
-
-# ---- 构建后自动部署运行依赖（调试 CRT + Qt DLL），避免运行/双击时报缺 DLL ----
-# ------------------------------------------------------------------
-# 构建后自动部署运行依赖（MSVC Debug 运行所需）
-#   由本机环境自动注入，可安全删除
-# ------------------------------------------------------------------
-if(MSVC)
-    set(_DEPLOY_CRT_DIR "D:/Software/CS/Microsoft Visual Studio/18/Community/VC/Redist/MSVC/14.51.36231/debug_nonredist/x64/Microsoft.VC145.DebugCRT")
-    if(EXISTS "${_DEPLOY_CRT_DIR}")
-        file(GLOB _DEPLOY_CRT_DLLS "${_DEPLOY_CRT_DIR}/*.dll")
-        foreach(_dll ${_DEPLOY_CRT_DLLS})
-            add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-                COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                        "${_dll}" "$<TARGET_FILE_DIR:${PROJECT_NAME}>")
-        endforeach()
-        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "C:/Program Files (x86)/Windows Kits/10/bin/10.0.26100.0/x64/ucrt/ucrtbased.dll" "$<TARGET_FILE_DIR:${PROJECT_NAME}>")
-    endif()
-    # 目标实际依赖的 Qt DLL（需要 CMake >= 3.21）
-    # 注意：生成表达式展开后是分号列表，直接放在 COMMAND 里会被整体加引号而失败，
-    #       因此先生成一个脚本，用 -P 执行
-    if(CMAKE_VERSION VERSION_GREATER_EQUAL 3.21)
-        file(GENERATE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/qt_deploy_$<CONFIG>.cmake" CONTENT "set(_dlls \"$<TARGET_RUNTIME_DLLS:${PROJECT_NAME}>\")\nif(_dlls)\n    file(COPY \${_dlls} DESTINATION \"$<TARGET_FILE_DIR:${PROJECT_NAME}>\")\nendif()")
-        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -P
-                    "${CMAKE_CURRENT_BINARY_DIR}/qt_deploy_$<CONFIG>.cmake")
-    endif()
-    # GUI 程序需要的平台插件
-    if(EXISTS "D:/Software/CS/QT/6.12.0/msvc2022_64/plugins/platforms/qwindowsd.dll")
-        add_custom_command(TARGET ${PROJECT_NAME} POST_BUILD
-            COMMAND ${CMAKE_COMMAND} -E make_directory
-                    "$<TARGET_FILE_DIR:${PROJECT_NAME}>/platforms"
-            COMMAND ${CMAKE_COMMAND} -E copy_if_different
-                    "D:/Software/CS/QT/6.12.0/msvc2022_64/plugins/platforms/qwindowsd.dll"
-                    "$<TARGET_FILE_DIR:${PROJECT_NAME}>/platforms/qwindowsd.dll")
-    endif()
 endif()
 
 

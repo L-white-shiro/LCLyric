@@ -1,30 +1,4 @@
-#include<QApplication>
-#include<QWidget>
-#include<QLabel>
-#include<QPushButton>
-#include<QVBoxLayout>
-#include<QHBoxLayout>
-#include<QTimer>
-#include<QString>
-#include<QFile>
-#include<QFileDialog>
-#include<QDebug>
-#include<QByteArray>
-#include<QRegularExpression>
-#include<vector>
-#include<QStringList>
-#include<QElapsedTimer>
-#include<algorithm>
-#include<utility>
-#include<QGuiApplication>
-#include<QScreen>
-#include<QRandomGenerator>
-#include<QFontMetrics>
-#include<QColorDialog>
-#include<QFontDialog>
-#include<QLineEdit>
-#include<QIntValidator>
-#include<QStackedWidget>
+#include "main.h"
 struct Lyric_Line
 {
     qint64 Time;
@@ -39,6 +13,12 @@ int main(int argc, char* argv[])
     int visibleLyricLine=-1;
     std::vector<Lyric_Line> Lines;//动态数组歌词行
     QApplication app(argc, argv);
+    QCoreApplication::setApplicationName("LCLyric");//设置应用名称
+    QString ConfigDir=QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);//应用目录查找存入
+    bool creator=QDir().mkpath(ConfigDir);//创建目录
+    if(!creator)qDebug()<<"目录创建失败";
+    QString FilePath=QDir(ConfigDir).filePath("setting.json");//拼接文件路径
+    qDebug()<<ConfigDir;
     QWidget window;//顶层窗口
     window.setWindowTitle("LCLyric");
     window.resize(1200, 300);
@@ -182,10 +162,79 @@ int main(int argc, char* argv[])
         }
     });
     int Size=20;//字号初始化
-    QFont font=label->font();
-    font.setPointSize(Size);
-    label->setFont(font);
-    Size_Input->setText(QString::number(Size));//字号输入
+    QFont defaultFont = label->font();
+    defaultFont.setPointSize(Size);
+    label->setFont(defaultFont);
+    Size_Input->setText(QString::number(Size));
+    auto* button_file=new QPushButton("输出",Page_setting);
+    QObject::connect(button_file,&QPushButton::clicked,Page_setting,[label,FilePath](){//保存用户设置
+        QSaveFile file(FilePath);
+        QString Fonttext=label->font().toString();//截取字体信息
+        QColor Color=label->palette().color(QPalette::WindowText);//截取颜色信息
+        QString ColorText=Color.name(QColor::HexRgb);
+        QJsonObject Object;//Json对象
+        Object.insert("Version",1);//组织json字段
+        Object.insert("Font",Fonttext);
+        Object.insert("Color",ColorText);
+        QJsonDocument document(Object);//Json文件打包对象
+        QByteArray Byte=document.toJson(QJsonDocument::Indented);
+        qDebug().noquote()<<Byte;
+        bool opened=file.open(QIODevice::WriteOnly);
+        if(!opened)
+        {
+            qDebug()<<"打开失败";
+            return;
+        }
+        qint64 written=file.write(Byte);
+        if(written!=Byte.size())//写入字节完整性检查
+        {
+            qDebug()<<"保存失败"<<file.errorString();
+            return;
+        }
+        bool saved=file.commit();
+        if(!saved)//提交成功性检查
+        {
+            qDebug()<<"保存失败"<<file.errorString();
+            return;
+        }
+        qDebug()<<"保存成功";
+    });
+    auto LoadSetting=[&]()//读取用户设置
+    {
+        QFile configFile(FilePath);
+        if(!configFile.exists())return;//无配置json文件
+        if(!configFile.open(QIODevice::ReadOnly))return;//只读打开失败
+        QByteArray Byte=configFile.readAll();
+        if(configFile.error()!=QFileDevice::NoError)return;//打开错误
+        QJsonParseError ParseError;
+        QJsonDocument document=QJsonDocument::fromJson(Byte,&ParseError);
+        if(ParseError.error!=QJsonParseError::NoError)return;//解析json错误
+        if(!document.isObject())return;
+        QJsonObject Object=document.object();
+        QJsonValue versionValue=Object.value("Version");
+        if(!versionValue.isDouble() || versionValue.toDouble()!=1)return;//字体颜色格式检查
+        QJsonValue fontValue=Object.value("Font");
+        if(!fontValue.isString()) return;
+        QJsonValue colorValue=Object.value("Color");
+        if(!colorValue.isString())return;
+        QFont Fontnew=label->font();
+        bool fontchange=Fontnew.fromString(fontValue.toString());
+        if(fontchange && Fontnew.pointSize()>=8 && Fontnew.pointSize()<=96)//字号大小，写入成功检查
+        {
+            label->setFont(Fontnew);
+            Size=Fontnew.pointSize();
+            Size_Input->setText(QString::number(Fontnew.pointSize()));
+        }
+            else Size=20,Size_Input->setText(QString::number(20));//默认设定
+        QColor colornew(colorValue.toString());
+        if(colornew.isValid())//颜色写入检查
+        {
+            QPalette setcolor=label->palette();
+            setcolor.setColor(QPalette::WindowText,colornew);
+            label->setPalette(setcolor);
+        }
+    };
+    LoadSetting();
     auto* Size_validator=new QIntValidator(8,96,Size_Input);//字号验证器
     Size_Input->setValidator(Size_validator);
     QObject::connect(Size_Input,&QLineEdit::returnPressed,Page_setting,//字号更改
@@ -279,6 +328,7 @@ int main(int argc, char* argv[])
     auto* Size_label=new QLabel("字号(pt):",Page_setting);
     layout_Page_setting_size->addWidget(Size_label);
     layout_Page_setting_size->addWidget(Size_Input);
+    layout_Page_setting_size->addWidget(button_file);
     layout_Page_setting_size->addStretch();
     layout_Page_setting->addLayout(layout_Page_setting_size);
     LyricWindow.show();
