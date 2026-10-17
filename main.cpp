@@ -24,6 +24,7 @@ int main(int argc, char* argv[])
     window.resize(1200, 300);
     QWidget LyricWindow;//歌词显示窗口
     QScreen* Screen=QGuiApplication::primaryScreen();//窗口查找
+
     if(Screen==nullptr)
     {
         qDebug()<<"无可用主页面";
@@ -343,6 +344,69 @@ int main(int argc, char* argv[])
         LyricWord_count->setText(QString::number(visibleLyric));
         LyricLine_count->setText(QString::number(0));
     });
+    auto* NetworkRequset=new QNetworkAccessManager(&window);
+    auto* Networktrial=new QPushButton(Page_setting);
+    QObject::connect(Networktrial,&QPushButton::clicked,Page_setting,
+    [NetworkRequset](){
+        QUrl url("https://music.163.com/api/search/get/web");//初始URL
+        QUrlQuery query;//查询参数拼接
+        query.addQueryItem("s","源流懐古 Halozy");
+        query.addQueryItem("type","1");
+        query.addQueryItem("limit","10");
+        query.addQueryItem("offset","0");
+        url.setQuery(query);
+        QNetworkRequest Request(url);
+        qDebug()<<url.toString();
+        QNetworkReply* reply=NetworkRequset->get(Request);//先拿到 reply，再连接信号
+        QObject::connect(reply,&QNetworkReply::finished,NetworkRequset,
+        [reply](){
+            if(reply->error()!=QNetworkReply::NoError)//联网检查
+            {
+                qDebug()<<"网络错误"<<reply->errorString();
+                reply->deleteLater();
+                return;
+            }
+            QByteArray Bytes=reply->readAll();//读取内容
+            QJsonParseError Error;
+            auto document=QJsonDocument::fromJson(Bytes,&Error);//Json转换
+            if(Error.error!=QJsonParseError::NoError)//解析json错误
+            {
+                qDebug()<<"网络返回json文件解析失败"<<Error.errorString();
+                return;
+            }
+            if(!document.isObject())
+            {
+                qDebug()<<"网络返回对象错误";
+                return;
+            }
+            QJsonObject Object=document.object();
+            QJsonValue Result=Object.value("result");//扒result
+            if(!Result.isObject())
+            {
+                qDebug()<<"result根节点非对象";
+                return;
+            }
+            QJsonValue songs=Result.toObject().value("songs");//扒songs
+            if(!songs.isArray())
+            {
+                qDebug()<<"songs根节点非对象";
+                return;
+            }
+            auto songsarray=songs.toArray();
+            for(const auto& songsNOW:songsarray)
+            {
+                QJsonObject SongsObject=songsNOW.toObject();
+                QJsonValue Album=SongsObject.value("album");//扒album
+                QJsonValue Album_Name=Album.toObject().value("name");//扒album名字
+                QJsonValue Songs_ID=SongsObject.value("id");//扒歌曲id
+                QJsonValue Duration=SongsObject.value("duration");//扒持续时间
+                QJsonValue Artist=SongsObject.value("artists");//扒艺术家信息
+                QJsonValue Artist_Name=Artist.toObject().value("name");//扒艺术家名字
+                qDebug().noquote()<<Album_Name.toString()<<"|"<<Songs_ID.toInt()<<"|"<<Duration.toInt()<<"|"<<Artist_Name.toString();
+            }
+            reply->deleteLater();
+        });
+    });
     auto* layout=new QVBoxLayout(&window);
     auto* layout_Page_main=new QVBoxLayout(Page_main);
     auto* layout_Page_setting=new QVBoxLayout(Page_setting);
@@ -360,6 +424,7 @@ int main(int argc, char* argv[])
     layout_Page_setting_size->addWidget(Size_label);
     layout_Page_setting_size->addWidget(Size_Input);
     layout_Page_setting_size->addWidget(button_file);
+    layout_Page_setting_size->addWidget(Networktrial);
     layout_Page_setting_size->addStretch();
     layout_Page_setting->addLayout(layout_Page_setting_size);
     LyricWindow.show();

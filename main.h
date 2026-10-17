@@ -34,4 +34,10 @@
 #include<QSaveFile>
 #include<QJsonParseError>
 #include<QJsonValue>
+#include<QNetworkAccessManager>
+#include<QNetworkRequest>
+#include<QNetworkReply>
+#include<QUrl>
+#include<QUrlQuery>
+#include<QJsonArray>
 #endif // MAIN_H
