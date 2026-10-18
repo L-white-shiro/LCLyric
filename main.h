@@ -40,4 +40,5 @@
 #include<QUrl>
 #include<QUrlQuery>
 #include<QJsonArray>
+#include<QThread>
 #endif // MAIN_H

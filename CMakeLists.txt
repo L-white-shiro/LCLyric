@@ -14,9 +14,9 @@ find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Network)
 
 set(PROJECT_SOURCES
         main.cpp
-        mainwindow.cpp
-        mainwindow.h
-        mainwindow.ui
+
+
+
 )
 
 add_executable(smtc_probe smtc_probe.cpp)
@@ -41,6 +41,7 @@ endif()
 target_link_libraries(untitled1 PRIVATE
     Qt${QT_VERSION_MAJOR}::Widgets
     Qt${QT_VERSION_MAJOR}::Network
+    windowsapp
 )
 
 set_target_properties(untitled1 PROPERTIES
@@ -49,6 +50,9 @@ set_target_properties(untitled1 PROPERTIES
     MACOSX_BUNDLE TRUE
     WIN32_EXECUTABLE TRUE
 )
+
+target_compile_features(untitled1 PRIVATE cxx_std_20)
+target_compile_options(untitled1 PRIVATE /utf-8)
 
 include(GNUInstallDirs)
 install(TARGETS untitled1

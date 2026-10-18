@@ -1,4 +1,8 @@
 #include "main.h"
+#include <winrt/Windows.Foundation.Collections.h>
+#include<winrt/Windows.Foundation.h>
+#include<winrt/Windows.Media.Control.h>
+#include<chrono>
 struct Lyric_Line
 {
     qint64 Time;
@@ -7,21 +11,125 @@ struct Lyric_Line
 QRegularExpression Pattern(
     R"(^\[(\d{2}):([0-5]\d)\.(\d{2})\](.*)$)"
     );
+struct songsStructinfo
+{
+    qint64 SID,albumID,Duration;
+    QString Artists_name[20],Songs_Name;
+};
+using SessionManager=winrt::Windows::Media::Control::GlobalSystemMediaTransportControlsSessionManager;
+using Media=winrt::Windows::Media::Control::GlobalSystemMediaTransportControlsSession;
+using Playbackstatus=winrt::Windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackStatus;
+QThread* Thread=nullptr;
 int main(int argc, char* argv[])
 {
     int visibleLyric=0;
     int visibleLyricLine=-1;
+    std::vector<songsStructinfo>songsInfo;//动态数组歌词信息
     std::vector<Lyric_Line> Lines;//动态数组歌词行
     QApplication app(argc, argv);
     QCoreApplication::setApplicationName("LCLyric");//设置应用名称
+    QWidget window;//顶层窗口
+    window.setWindowTitle("LCLyric");
+    window.resize(1200, 300);
+    qint64 SmtcPositionMS=0,Smtctimeline=0;
+    QString SmtcArtist="";
+    bool SmtcPositionchange=0;
+    auto Thread=QThread::create([&window,&SmtcPositionMS,&SmtcPositionchange,&Smtctimeline,&SmtcArtist]()//SMTC
+    {
+        bool init=false;
+        try{
+            winrt::init_apartment();
+            qDebug()<<"WinRT initialization succeeded\n";
+            init=true;
+            {
+                auto manager=SessionManager::RequestAsync().get();//get获取管理器
+                while(!QThread::currentThread()->isInterruptionRequested())
+                {
+                    auto sessionall=manager.GetSessions();//获取最优会话
+                    for(const auto& session:sessionall)
+                    {
+                        bool change=0;
+                        qint64 positionMS=0;
+                        if(winrt::to_string(session.SourceAppUserModelId())=="cloudmusic.exe")
+                        {
+                            if(!session)//非空检查
+                            {
+                                qDebug()<<"NO current session\n";
+                            }
+                            else
+                            {
+                                try
+                                {
+                                    auto appName=session.SourceAppUserModelId();//获取会话名
+                                    auto propertiesOperation=session.TryGetMediaPropertiesAsync();//异步请求会话属性
+                                    auto properties=propertiesOperation.get();//获取会话属性
+                                    auto title=properties.Title();//标题获取
+                                    auto artist=properties.Artist();//歌手信息获取
+                                    qDebug()<<artist;
+                                    auto playbackinfo=session.GetPlaybackInfo();//播放状态获取
+                                    if(playbackinfo)
+                                    {
+                                        auto status=playbackinfo.PlaybackStatus();
+                                        if(status==Playbackstatus::Playing)
+                                        {
+                                            //qDebug()<<"Status:Playing\n";
+                                        }
+                                        else if(status==Playbackstatus::Paused)
+                                        {
+                                            // qDebug()<<"Status:Paused\n";
+                                        }
+                                        else if(status==Playbackstatus::Stopped)
+                                        {
+                                            //qDebug()<<"Status:Stopped\n";
+                                        }
+                                        //else qDebug()<<"Status:Others\n";
+                                    }
+                                    auto timeline=session.GetTimelineProperties();//获取时间线
+                                    if(timeline>0)
+                                    {
+                                        change=1;
+                                        auto position=timeline.Position();
+                                        auto endtime=timeline.EndTime();
+                                        positionMS=std::chrono::duration_cast<std::chrono::milliseconds>(position).count();//毫秒转换
+                                        auto endtimeMS=std::chrono::duration_cast<std::chrono::milliseconds>(endtime).count();
+                                        if(endtimeMS>0)
+                                        {
+                                            QMetaObject::invokeMethod(&window,
+                                            [&SmtcPositionMS,&SmtcPositionchange,&Smtctimeline,change,positionMS,timeline]{
+                                                SmtcPositionMS=positionMS;
+                                                SmtcPositionchange=change;
+                                            },
+                                            Qt::QueuedConnection);
+                                        }
+                                        else continue;
+                                    }
+                                }
+                                catch(const winrt::hresult_error& error)
+                                {
+                                    qDebug()<<QString::fromStdString(winrt::to_string(error.message()));
+                                }
+                            }
+                        }
+                    }
+                    QThread::msleep(200);
+                }
+            }
+            winrt::uninit_apartment();
+            return;
+        }
+        catch(const winrt::hresult_error& error){
+            if(init==true)winrt::uninit_apartment();
+            qDebug()<<winrt::to_string(error.message())<<"\n";
+            return;
+        }
+    });
+    Thread->setParent(&app);
+    Thread->start();
     QString ConfigDir=QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);//应用目录查找存入
     bool creator=QDir().mkpath(ConfigDir);//创建目录
     if(!creator)qDebug()<<"目录创建失败";
     QString FilePath=QDir(ConfigDir).filePath("setting.json");//拼接文件路径
     qDebug()<<ConfigDir;
-    QWidget window;//顶层窗口
-    window.setWindowTitle("LCLyric");
-    window.resize(1200, 300);
     QWidget LyricWindow;//歌词显示窗口
     QScreen* Screen=QGuiApplication::primaryScreen();//窗口查找
 
@@ -69,10 +177,10 @@ int main(int argc, char* argv[])
     Stack->setCurrentIndex(0);
     Top_button_main->setEnabled(false);
     QElapsedTimer ElapsedTimer;//计时器
-    auto* label=new QLabel(&LyricWindow); // 主显示区
+    auto* label=new QLabel(&LyricWindow); //主显示区
     label->setStyleSheet("font-weight:bold;");
-    auto* button_in=new QPushButton("显示示例", Page_main); // 显示按钮
-    auto* button_out=new QPushButton("清空", Page_main); // 清空页面
+    auto* button_in=new QPushButton("显示示例", Page_main); //显示按钮
+    auto* button_out=new QPushButton("清空", Page_main); //清空页面
     auto* button_ColorChoose=new QPushButton("选择颜色",Page_setting);//颜色选择
     auto* button_FontChoose=new QPushButton("选择字体",Page_setting);//字体选择
     auto* Size_Input=new QLineEdit(Page_setting);//字号输入
@@ -80,31 +188,12 @@ int main(int argc, char* argv[])
     auto* OpenFile=new QPushButton("打开文件",Page_main);//文件打开按钮
     auto* LyricWord_count=new QLabel(QString::number(visibleLyric), Page_main); // 测试用歌词字数展示
     auto* LyricLine_count=new QLabel(QString::number(0),Page_main); // 测试用歌词行数目展示
-    QObject::connect(OpenFile,&QPushButton::clicked,Page_main,
-    [&window,timer,&visibleLyric,label,LyricWord_count,&Lines,&visibleLyricLine,LyricLine_count]() { //打开文件
-        QString File=QFileDialog::getOpenFileName(&window,"选择文件",QString(),"文本文件(*.txt);;歌词文件(*.lrc)");
-        if(File.isEmpty())return;
-        QFile file(File);
-        if(!file.open(QIODevice::ReadOnly))//打开审查
+    auto ParseStream=[](QTextStream &stream)->std::vector<Lyric_Line>{//文件流输入
+        std::vector<Lyric_Line>Temp_Lyric;
+        while(!stream.atEnd())
         {
-            qDebug() << file.errorString();
-            return;
-        }
-        std::vector<Lyric_Line> Temp_Lyric;
-        QByteArray Byte=file.readAll();
-        if(file.error()!=QFileDevice::NoError)//读取审查
-        {
-            qDebug()<< file.errorString();
-            return;
-        }
-        QString Now_Lyric=QString::fromUtf8(Byte);
-        if(Now_Lyric.isEmpty())return;
-        QStringList Lyric_row=Now_Lyric.split('\n'); // 截取歌词
-        LyricWord_count->setText(QString::number(visibleLyric));
-        for(const QString &Now_row:Lyric_row)
-        {
-            QString matcher=Now_row.trimmed();
-            auto match=Pattern.match(matcher);
+            QString Line=stream.readLine().trimmed();
+            auto match=Pattern.match(Line);
             if(match.hasMatch())
             {
                 Lyric_Line Lyric_Now;
@@ -113,29 +202,57 @@ int main(int argc, char* argv[])
                 Temp_Lyric.push_back(Lyric_Now);
             }
         }
-        if(Temp_Lyric.size()==0)
+        std::stable_sort(Temp_Lyric.begin(),Temp_Lyric.end(),[](const Lyric_Line& a,const Lyric_Line& b){return a.Time<b.Time;});
+        return Temp_Lyric;
+    };
+    QObject::connect(OpenFile,&QPushButton::clicked,Page_main,//打开文件
+    [&window,timer,&visibleLyric,label,LyricWord_count,&Lines,&visibleLyricLine,LyricLine_count,ParseStream]() {
+        QString File=QFileDialog::getOpenFileName(&window,"选择文件",QString(),"文本文件(*.txt);;歌词文件(*.lrc)");
+        if(File.isEmpty())return;
+        QFile file(File);
+        if(!file.open(QIODevice::ReadOnly))//打开审查
         {
+            qDebug()<<file.errorString();
             return;
         }
+        QTextStream stream(&file);
+        stream.setEncoding(QStringConverter::Utf8);//文件流转码
+        std::vector<Lyric_Line>Temp_Lyric=ParseStream(stream);
+        file.close();
+
+        if(Temp_Lyric.empty())return;
+        //重置状态
         timer->stop();
         visibleLyric=0;
         label->clear();
-        std::stable_sort(Temp_Lyric.begin(),Temp_Lyric.end(),[](const Lyric_Line& a,const Lyric_Line& b){return a.Time<b.Time;});
+
         Lines=std::move(Temp_Lyric);
         visibleLyricLine=-1;
         LyricWord_count->setText(QString::number(visibleLyric));
         LyricLine_count->setText(QString::number(0));
     });
-    QObject::connect(timer,&QTimer::timeout,&window,
-    [&visibleLyric,label,timer,LyricWord_count,&visibleLyricLine,&Lines,&ElapsedTimer,LyricLine_count,&LyricWindow]() { //超时器信号槽
+    qint64 lasttime=0;
+    QObject::connect(timer,&QTimer::timeout,&window,//超时器信号槽
+    [&visibleLyric,label,timer,LyricWord_count,&visibleLyricLine,&Lines,&ElapsedTimer,LyricLine_count,&LyricWindow,&SmtcPositionMS,&SmtcPositionchange,&lasttime]() {
         int i=-1;//行筛选
-        qint64 TIMESCAN=ElapsedTimer.elapsed();
+        qint64 TIMESCAN=ElapsedTimer.elapsed()+SmtcPositionMS;
+        if(SmtcPositionchange && lasttime!=SmtcPositionMS)
+        {
+        TIMESCAN=SmtcPositionMS,qDebug()<<SmtcPositionchange<<TIMESCAN;
+        ElapsedTimer.restart();
+        SmtcPositionchange=0;
+        lasttime=SmtcPositionMS;
+        }
         for(std::size_t I=0;I<Lines.size();++I)
         {
             if(Lines[I].Time>TIMESCAN)break;
             i=I;
         }
-        if(i==-1)return;
+        if(i==-1)
+        {
+            label->clear();
+            return;
+        }
         bool IfChange;//换行设定随机歌词位置
         if(visibleLyricLine!=i)IfChange=1;
         else IfChange=0;
@@ -158,7 +275,6 @@ int main(int argc, char* argv[])
         visibleLyric=int(LineWord_display);
         if(Lines.size()!=0 && visibleLyricLine+1>=Lines.size() && LineWord_display>=Lines[visibleLyricLine].Context.size())
         {
-            timer->stop();
             return;
         }
     });
@@ -168,6 +284,7 @@ int main(int argc, char* argv[])
     label->setFont(defaultFont);
     Size_Input->setText(QString::number(Size));
     auto* button_file=new QPushButton("输出",Page_setting);
+    Thread->setParent(&app);
     QObject::connect(button_file,&QPushButton::clicked,Page_setting,[label,FilePath](){//保存用户设置
         QSaveFile file(FilePath);
         QString Fonttext=label->font().toString();//截取字体信息
@@ -320,7 +437,7 @@ int main(int argc, char* argv[])
         label->setPalette(Palette);//赋值
     });
     QObject::connect(button_in,&QPushButton::clicked,Page_main,
-    [label,&visibleLyric,timer,LyricWord_count,&ElapsedTimer,&visibleLyricLine,LyricLine_count,&Lines]() { // 按钮1信号槽
+    [label,&visibleLyric,timer,LyricWord_count,&ElapsedTimer,&visibleLyricLine,LyricLine_count,&Lines,&lasttime]() { // 按钮1信号槽
         timer->stop();
         if(Lines.empty()) // 防止段错误，边界检查
         {
@@ -330,6 +447,7 @@ int main(int argc, char* argv[])
         label->clear();
         visibleLyricLine=-1;
         visibleLyric=0;
+        lasttime=0;
         LyricWord_count->setText(QString::number(visibleLyric));
         LyricLine_count->setText(QString::number(0));
         timer->start(50);
@@ -346,9 +464,9 @@ int main(int argc, char* argv[])
     });
     auto* NetworkRequset=new QNetworkAccessManager(&window);
     auto* Networktrial=new QPushButton(Page_setting);
-    QObject::connect(Networktrial,&QPushButton::clicked,Page_setting,
-    [NetworkRequset](){
-        QUrl url("https://music.163.com/api/search/get/web");//初始URL
+    QObject::connect(Networktrial,&QPushButton::clicked,Page_setting,//网络查询
+    [NetworkRequset,&songsInfo,ParseStream,&Lines,&visibleLyricLine,LyricWord_count,timer,&visibleLyric,label,LyricLine_count](){
+        QUrl url("https://music.163.com/api/search/get/web");//查询歌曲初始URL
         QUrlQuery query;//查询参数拼接
         query.addQueryItem("s","源流懐古 Halozy");
         query.addQueryItem("type","1");
@@ -358,8 +476,9 @@ int main(int argc, char* argv[])
         QNetworkRequest Request(url);
         qDebug()<<url.toString();
         QNetworkReply* reply=NetworkRequset->get(Request);//先拿到 reply，再连接信号
+        songsInfo.clear();
         QObject::connect(reply,&QNetworkReply::finished,NetworkRequset,
-        [reply](){
+        [reply,&songsInfo,NetworkRequset,ParseStream,&Lines,&visibleLyricLine,LyricWord_count,timer,&visibleLyric,label,LyricLine_count](){
             if(reply->error()!=QNetworkReply::NoError)//联网检查
             {
                 qDebug()<<"网络错误"<<reply->errorString();
@@ -367,6 +486,7 @@ int main(int argc, char* argv[])
                 return;
             }
             QByteArray Bytes=reply->readAll();//读取内容
+            reply->deleteLater();
             QJsonParseError Error;
             auto document=QJsonDocument::fromJson(Bytes,&Error);//Json转换
             if(Error.error!=QJsonParseError::NoError)//解析json错误
@@ -389,22 +509,96 @@ int main(int argc, char* argv[])
             QJsonValue songs=Result.toObject().value("songs");//扒songs
             if(!songs.isArray())
             {
-                qDebug()<<"songs根节点非对象";
+                qDebug()<<"songs根节点非数组";
                 return;
             }
             auto songsarray=songs.toArray();
+            if(songsarray.isEmpty())
+            {
+                qDebug()<<"候选列表为空";
+                return;
+            }
             for(const auto& songsNOW:songsarray)
             {
+                songsStructinfo TempSongs;//临时储存单曲信息
                 QJsonObject SongsObject=songsNOW.toObject();
                 QJsonValue Album=SongsObject.value("album");//扒album
-                QJsonValue Album_Name=Album.toObject().value("name");//扒album名字
+                QJsonValue Album_Id=Album.toObject().value("id");//扒albumid
                 QJsonValue Songs_ID=SongsObject.value("id");//扒歌曲id
+                QJsonValue Songs_Name=SongsObject.value("name");
                 QJsonValue Duration=SongsObject.value("duration");//扒持续时间
-                QJsonValue Artist=SongsObject.value("artists");//扒艺术家信息
-                QJsonValue Artist_Name=Artist.toObject().value("name");//扒艺术家名字
-                qDebug().noquote()<<Album_Name.toString()<<"|"<<Songs_ID.toInt()<<"|"<<Duration.toInt()<<"|"<<Artist_Name.toString();
+                QJsonValue Artist=SongsObject.value("artists");//扒总体艺术家信息
+                auto ArtistArray=Artist.toArray();
+                TempSongs.SID=Songs_ID.toVariant().toLongLong();
+                TempSongs.albumID=Album_Id.toVariant().toLongLong();
+                TempSongs.Duration=Duration.toVariant().toLongLong();
+                TempSongs.Songs_Name=Songs_Name.toVariant().toString();
+                qDebug().noquote()<<TempSongs.SID<<"|"<<TempSongs.albumID<<"|"<<TempSongs.Duration<<"|"<<TempSongs.Songs_Name<<"|";
+                int j=0;
+                for(const auto& ArtistNOW:ArtistArray)
+                {
+                    QJsonObject Artists=ArtistNOW.toObject();
+                    QJsonValue Artist_Name=Artists.value("name");//扒艺术家名字
+                    TempSongs.Artists_name[j]=Artist_Name.toString();
+                    qDebug().noquote()<<"|"<<TempSongs.Artists_name[j];
+                    ++j;
+                }
+                songsInfo.push_back(TempSongs);
             }
-            reply->deleteLater();
+            QUrl song_url("https://music.163.com/api/song/media"); //查询歌词URL
+            QUrlQuery song_Query;
+            song_Query.addQueryItem("id",QString::number(songsInfo[0].SID));
+            song_url.setQuery(song_Query);
+            QNetworkRequest songsRequset(song_url);
+            QNetworkReply* song_reply=NetworkRequset->get(songsRequset);
+            qDebug()<<song_url.toString();
+            QObject::connect(song_reply,&QNetworkReply::finished,NetworkRequset,//歌词获取
+            [song_reply,&songsInfo,NetworkRequset,ParseStream,&Lines,&visibleLyricLine,LyricWord_count,timer,&visibleLyric,label,LyricLine_count](){
+                if(song_reply->error()!=QNetworkReply::NoError)//联网检查
+                {
+                    qDebug()<<"歌词获取时网络错误"<<song_reply->errorString();
+                    song_reply->deleteLater();
+                    return;
+                }
+                QByteArray Bytes=song_reply->readAll();//读取内容
+                song_reply->deleteLater();
+                QJsonParseError Error;
+                auto document=QJsonDocument::fromJson(Bytes,&Error);//Json转换
+                if(Error.error!=QJsonParseError::NoError)//解析json错误
+                {
+                    qDebug()<<"歌词网络返回json文件解析失败"<<Error.errorString();
+                    return;
+                }
+                if(!document.isObject())
+                {
+                    qDebug()<<"歌词网络返回对象错误";
+                    return;
+                }
+                QJsonObject Object=document.object();
+                QJsonValue lyric=Object.value("lyric");//lyric
+                if(!lyric.isString())
+                {
+                    qDebug()<<"lyric根节点非字符串";
+                    return;
+                }
+                QString text=lyric.toString();
+                if(!text.isEmpty())
+                {
+                    QTextStream stream(&text);
+                    stream.setEncoding(QStringConverter::Utf8);//文件流转码
+                    std::vector<Lyric_Line>Temp_Lyric=ParseStream(stream);
+                    if(Temp_Lyric.empty())return;
+                    //重置状态
+                    timer->stop();
+                    visibleLyric=0;
+                    label->clear();
+
+                    Lines=std::move(Temp_Lyric);
+                    visibleLyricLine=-1;
+                    LyricWord_count->setText(QString::number(visibleLyric));
+                    LyricLine_count->setText(QString::number(0));
+                }
+            });
         });
     });
     auto* layout=new QVBoxLayout(&window);
@@ -429,5 +623,8 @@ int main(int argc, char* argv[])
     layout_Page_setting->addLayout(layout_Page_setting_size);
     LyricWindow.show();
     window.show(); // NOLINT
-    return app.exec();
+    int exitcode=app.exec();//exitcode接收主线程事件循环是否结束，返回0把子线程也结束
+    Thread->requestInterruption();
+    Thread->wait();
+    return exitcode;
 }
