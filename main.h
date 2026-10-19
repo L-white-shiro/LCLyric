@@ -41,4 +41,12 @@
 #include<QUrlQuery>
 #include<QJsonArray>
 #include<QThread>
+#include<QPainter>
+#include<QPropertyAnimation>
+#include<QGraphicsDropShadowEffect>
+#include<QPaintEvent>
+#include<winrt/Windows.Foundation.Collections.h>
+#include<winrt/Windows.Foundation.h>
+#include<winrt/Windows.Media.Control.h>
+#include<chrono>
 #endif // MAIN_H

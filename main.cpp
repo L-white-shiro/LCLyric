@@ -1,21 +1,25 @@
 #include "main.h"
-#include <winrt/Windows.Foundation.Collections.h>
-#include<winrt/Windows.Foundation.h>
-#include<winrt/Windows.Media.Control.h>
-#include<chrono>
+#include "Lyriclabel.h"
 struct Lyric_Line
 {
     qint64 Time;
     QString Context;
 };
-QRegularExpression Pattern(
+QRegularExpression Pattern_nonms(
+    R"(^\[(\d{2}):([0-5]\d)\](.*)$)"
+    );
+QRegularExpression Pattern_non_00ms(
     R"(^\[(\d{2}):([0-5]\d)\.(\d{2})\](.*)$)"
+    );
+QRegularExpression Pattern_non_000ms(
+    R"(^\[(\d{2}):([0-5]\d)\.(\d{3})\](.*)$)"
     );
 struct songsStructinfo
 {
     qint64 SID,albumID,Duration;
     QString Artists_name[20],Songs_Name;
 };
+
 using SessionManager=winrt::Windows::Media::Control::GlobalSystemMediaTransportControlsSessionManager;
 using Media=winrt::Windows::Media::Control::GlobalSystemMediaTransportControlsSession;
 using Playbackstatus=winrt::Windows::Media::Control::GlobalSystemMediaTransportControlsSessionPlaybackStatus;
@@ -31,100 +35,6 @@ int main(int argc, char* argv[])
     QWidget window;//顶层窗口
     window.setWindowTitle("LCLyric");
     window.resize(1200, 300);
-    qint64 SmtcPositionMS=0,Smtctimeline=0;
-    QString SmtcArtist="";
-    bool SmtcPositionchange=0;
-    auto Thread=QThread::create([&window,&SmtcPositionMS,&SmtcPositionchange,&Smtctimeline,&SmtcArtist]()//SMTC
-    {
-        bool init=false;
-        try{
-            winrt::init_apartment();
-            qDebug()<<"WinRT initialization succeeded\n";
-            init=true;
-            {
-                auto manager=SessionManager::RequestAsync().get();//get获取管理器
-                while(!QThread::currentThread()->isInterruptionRequested())
-                {
-                    auto sessionall=manager.GetSessions();//获取最优会话
-                    for(const auto& session:sessionall)
-                    {
-                        bool change=0;
-                        qint64 positionMS=0;
-                        if(winrt::to_string(session.SourceAppUserModelId())=="cloudmusic.exe")
-                        {
-                            if(!session)//非空检查
-                            {
-                                qDebug()<<"NO current session\n";
-                            }
-                            else
-                            {
-                                try
-                                {
-                                    auto appName=session.SourceAppUserModelId();//获取会话名
-                                    auto propertiesOperation=session.TryGetMediaPropertiesAsync();//异步请求会话属性
-                                    auto properties=propertiesOperation.get();//获取会话属性
-                                    auto title=properties.Title();//标题获取
-                                    auto artist=properties.Artist();//歌手信息获取
-                                    qDebug()<<artist;
-                                    auto playbackinfo=session.GetPlaybackInfo();//播放状态获取
-                                    if(playbackinfo)
-                                    {
-                                        auto status=playbackinfo.PlaybackStatus();
-                                        if(status==Playbackstatus::Playing)
-                                        {
-                                            //qDebug()<<"Status:Playing\n";
-                                        }
-                                        else if(status==Playbackstatus::Paused)
-                                        {
-                                            // qDebug()<<"Status:Paused\n";
-                                        }
-                                        else if(status==Playbackstatus::Stopped)
-                                        {
-                                            //qDebug()<<"Status:Stopped\n";
-                                        }
-                                        //else qDebug()<<"Status:Others\n";
-                                    }
-                                    auto timeline=session.GetTimelineProperties();//获取时间线
-                                    if(timeline>0)
-                                    {
-                                        change=1;
-                                        auto position=timeline.Position();
-                                        auto endtime=timeline.EndTime();
-                                        positionMS=std::chrono::duration_cast<std::chrono::milliseconds>(position).count();//毫秒转换
-                                        auto endtimeMS=std::chrono::duration_cast<std::chrono::milliseconds>(endtime).count();
-                                        if(endtimeMS>0)
-                                        {
-                                            QMetaObject::invokeMethod(&window,
-                                            [&SmtcPositionMS,&SmtcPositionchange,&Smtctimeline,change,positionMS,timeline]{
-                                                SmtcPositionMS=positionMS;
-                                                SmtcPositionchange=change;
-                                            },
-                                            Qt::QueuedConnection);
-                                        }
-                                        else continue;
-                                    }
-                                }
-                                catch(const winrt::hresult_error& error)
-                                {
-                                    qDebug()<<QString::fromStdString(winrt::to_string(error.message()));
-                                }
-                            }
-                        }
-                    }
-                    QThread::msleep(200);
-                }
-            }
-            winrt::uninit_apartment();
-            return;
-        }
-        catch(const winrt::hresult_error& error){
-            if(init==true)winrt::uninit_apartment();
-            qDebug()<<winrt::to_string(error.message())<<"\n";
-            return;
-        }
-    });
-    Thread->setParent(&app);
-    Thread->start();
     QString ConfigDir=QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);//应用目录查找存入
     bool creator=QDir().mkpath(ConfigDir);//创建目录
     if(!creator)qDebug()<<"目录创建失败";
@@ -162,6 +72,117 @@ int main(int argc, char* argv[])
     auto* Stack=new QStackedWidget(&window); //页面堆叠
     Stack->addWidget(Page_main);//index 0
     Stack->addWidget(Page_setting);//index 1
+    auto* Networktrial=new QPushButton(Page_setting);
+    Networktrial->hide();
+    qint64 SmtcPositionMS=0,Smtctimeline=0;//Smtc接收
+    QString SmtcArtist="",SmtcSongsname="",LastSong="";
+    bool SmtcPositionchange=0,Smtcsongschange=0;
+    bool lyricPlaying=0;//歌曲播放状态
+    auto Thread=QThread::create([&window,&SmtcPositionMS,&SmtcPositionchange,&Smtctimeline,&lyricPlaying
+    ,&SmtcArtist,&SmtcSongsname,&LastSong,&Smtcsongschange,Networktrial]()//SMTC
+    {
+    bool init=false;
+    try{
+        winrt::init_apartment();
+        qDebug()<<"WinRT initialization succeeded\n";
+        init=true;
+        {
+            auto manager=SessionManager::RequestAsync().get();//get获取管理器
+            while(!QThread::currentThread()->isInterruptionRequested())
+            {
+                lyricPlaying=0;
+                auto sessionall=manager.GetSessions();//获取最优会话
+                for(const auto& session:sessionall)
+                {
+                    bool change=0;
+                    qint64 positionMS=0;
+                    if(winrt::to_string(session.SourceAppUserModelId())=="cloudmusic.exe")
+                    {
+                        if(!session)//非空检查
+                        {
+                            qDebug()<<"NO current session\n";
+                        }
+                        else
+                        {
+                            try
+                            {
+                                auto appName=session.SourceAppUserModelId();//获取会话名
+                                auto propertiesOperation=session.TryGetMediaPropertiesAsync();//异步请求会话属性
+                                auto properties=propertiesOperation.get();//获取会话属性
+                                auto title=QString::fromStdString(winrt::to_string(properties.Title()));//歌曲名获取
+                                QString artist=QString::fromStdString(winrt::to_string(properties.Artist()));//歌手信息获取
+                                auto playbackinfo=session.GetPlaybackInfo();//播放状态获取
+                                if(playbackinfo)
+                                {
+                                    auto status=playbackinfo.PlaybackStatus();
+                                    if(status==Playbackstatus::Playing)
+                                    {
+                                        lyricPlaying=1;
+                                    }
+                                    else if(status==Playbackstatus::Paused)
+                                    {
+                                        lyricPlaying=0;
+                                    }
+                                    else if(status==Playbackstatus::Stopped)
+                                    {
+                                        lyricPlaying=0;
+                                    }
+                                    else lyricPlaying=0;
+                                }
+                                auto timeline=session.GetTimelineProperties();//获取时间线
+                                if(timeline>0)
+                                {
+                                    change=1;
+                                    auto position=timeline.Position();
+                                    auto endtime=timeline.EndTime();
+                                    positionMS=std::chrono::duration_cast<std::chrono::milliseconds>(position).count();//毫秒转换
+                                    auto endtimeMS=std::chrono::duration_cast<std::chrono::milliseconds>(endtime).count();
+                                    if(endtimeMS>0)
+                                    {
+                                        QMetaObject::invokeMethod(&window,
+                                        [&SmtcPositionMS,&SmtcPositionchange,&Smtctimeline,&SmtcArtist,&SmtcSongsname,&Smtcsongschange
+                                        ,change,positionMS,endtimeMS,artist,title,&LastSong,Networktrial]{
+                                            SmtcPositionMS=positionMS;
+                                            SmtcPositionchange=change;
+                                            Smtctimeline=endtimeMS;
+                                            SmtcArtist=artist;
+                                            SmtcSongsname=title;
+                                            if(LastSong!=title)
+                                            {
+                                                Smtcsongschange=1;
+                                                LastSong=title;
+                                                Networktrial->click();
+                                            }
+                                        },
+                                        Qt::QueuedConnection);
+                                    }
+                                    else
+                                    {
+                                        continue;
+                                    }
+                                }
+                            }
+                            catch(const winrt::hresult_error& error)
+                            {
+                                qDebug()<<QString::fromStdString(winrt::to_string(error.message()));
+                            }
+                        }
+                    }
+                }
+                QThread::msleep(200);
+            }
+        }
+        winrt::uninit_apartment();
+        return;
+    }
+    catch(const winrt::hresult_error& error){
+        if(init==true)winrt::uninit_apartment();
+        qDebug()<<winrt::to_string(error.message())<<"\n";
+        return;
+    }
+    });
+    Thread->setParent(&app);
+    Thread->start();
     QObject::connect(Top_button_setting,&QPushButton::clicked,&window,//翻设置页面
     [Stack,Top_button_main,Top_button_setting](){
         Stack->setCurrentIndex(1);
@@ -177,8 +198,7 @@ int main(int argc, char* argv[])
     Stack->setCurrentIndex(0);
     Top_button_main->setEnabled(false);
     QElapsedTimer ElapsedTimer;//计时器
-    auto* label=new QLabel(&LyricWindow); //主显示区
-    label->setStyleSheet("font-weight:bold;");
+    auto* label=new Lyriclabel(&LyricWindow); //主显示区
     auto* button_in=new QPushButton("显示示例", Page_main); //显示按钮
     auto* button_out=new QPushButton("清空", Page_main); //清空页面
     auto* button_ColorChoose=new QPushButton("选择颜色",Page_setting);//颜色选择
@@ -193,13 +213,35 @@ int main(int argc, char* argv[])
         while(!stream.atEnd())
         {
             QString Line=stream.readLine().trimmed();
-            auto match=Pattern.match(Line);
+            auto match=Pattern_non_00ms.match(Line);
             if(match.hasMatch())
             {
                 Lyric_Line Lyric_Now;
                 Lyric_Now.Time=60000LL*match.captured(1).toInt()+1000LL*match.captured(2).toInt()+match.captured(3).toInt()*10LL;
                 Lyric_Now.Context=match.captured(4);
                 Temp_Lyric.push_back(Lyric_Now);
+            }
+            else
+            {
+                auto match=Pattern_non_000ms.match(Line);
+                if(match.hasMatch())
+                {
+                    Lyric_Line Lyric_Now;
+                    Lyric_Now.Time=60000LL*match.captured(1).toInt()+1000LL*match.captured(2).toInt()+match.captured(3).toInt()*1LL;
+                    Lyric_Now.Context=match.captured(4);
+                    Temp_Lyric.push_back(Lyric_Now);
+                }
+                else
+                {
+                    auto match=Pattern_nonms.match(Line);
+                    if(match.hasMatch())
+                    {
+                        Lyric_Line Lyric_Now;
+                        Lyric_Now.Time=60000LL*match.captured(1).toInt()+1000LL*match.captured(2).toInt();
+                        Lyric_Now.Context=match.captured(3);
+                        Temp_Lyric.push_back(Lyric_Now);
+                    }
+                }
             }
         }
         std::stable_sort(Temp_Lyric.begin(),Temp_Lyric.end(),[](const Lyric_Line& a,const Lyric_Line& b){return a.Time<b.Time;});
@@ -233,12 +275,17 @@ int main(int argc, char* argv[])
     });
     qint64 lasttime=0;
     QObject::connect(timer,&QTimer::timeout,&window,//超时器信号槽
-    [&visibleLyric,label,timer,LyricWord_count,&visibleLyricLine,&Lines,&ElapsedTimer,LyricLine_count,&LyricWindow,&SmtcPositionMS,&SmtcPositionchange,&lasttime]() {
+    [&visibleLyric,label,timer,LyricWord_count,&visibleLyricLine,&Lines,
+    &ElapsedTimer,LyricLine_count,&LyricWindow,&SmtcPositionMS,&SmtcPositionchange,&lasttime,&lyricPlaying]() {
+        if(lyricPlaying!=1)
+        {
+        return;
+        }
         int i=-1;//行筛选
         qint64 TIMESCAN=ElapsedTimer.elapsed()+SmtcPositionMS;
         if(SmtcPositionchange && lasttime!=SmtcPositionMS)
         {
-        TIMESCAN=SmtcPositionMS,qDebug()<<SmtcPositionchange<<TIMESCAN;
+        TIMESCAN=SmtcPositionMS;
         ElapsedTimer.restart();
         SmtcPositionchange=0;
         lasttime=SmtcPositionMS;
@@ -260,8 +307,8 @@ int main(int argc, char* argv[])
         if(IfChange)
         {
             QFontMetrics XY(label->font());
-            int X=XY.horizontalAdvance(Lines[visibleLyricLine].Context);
-            int Y=XY.height();
+            int X=XY.horizontalAdvance(Lines[visibleLyricLine].Context)+2*label->SDoffset;
+            int Y=XY.height()+2*label->SDoffset;
             label->resize(X,Y);
             const int RandomX=QRandomGenerator::global()->bounded(std::max(0,LyricWindow.width()-X)+1);
             const int RandomY=QRandomGenerator::global()->bounded(std::max(0,LyricWindow.height()-Y)+1);
@@ -273,8 +320,9 @@ int main(int argc, char* argv[])
         LyricWord_count->setText(QString::number(LineWord_display));
         LyricLine_count->setText(QString::number(visibleLyricLine+1));
         visibleLyric=int(LineWord_display);
-        if(Lines.size()!=0 && visibleLyricLine+1>=Lines.size() && LineWord_display>=Lines[visibleLyricLine].Context.size())
+        if(Lines.size()!=0 && visibleLyricLine+1>=Lines.size() && LineWord_display>=Lines[visibleLyricLine].Context.size()&&TIMESCAN-Lines[visibleLyricLine].Time>7000)
         {
+            label->clear();
             return;
         }
     });
@@ -284,6 +332,7 @@ int main(int argc, char* argv[])
     label->setFont(defaultFont);
     Size_Input->setText(QString::number(Size));
     auto* button_file=new QPushButton("输出",Page_setting);
+    button_file->hide();
     Thread->setParent(&app);
     QObject::connect(button_file,&QPushButton::clicked,Page_setting,[label,FilePath](){//保存用户设置
         QSaveFile file(FilePath);
@@ -396,8 +445,8 @@ int main(int argc, char* argv[])
         if(visibleLyricLine!=-1 && static_cast<std::size_t>(visibleLyricLine)<Lines.size())
         {
         QFontMetrics XY(label->font());
-        int X=XY.horizontalAdvance(Lines[visibleLyricLine].Context);
-        int Y=XY.height();
+        int X=XY.horizontalAdvance(Lines[visibleLyricLine].Context)+2*label->SDoffset;
+        int Y=XY.height()+2*label->SDoffset;
         label->resize(X,Y);
         const int MaxX=std::max(0,LyricWindow.width()-X);//边界条件判断以及纠正
         const int MaxY=std::max(0,LyricWindow.height()-Y);
@@ -416,8 +465,8 @@ int main(int argc, char* argv[])
             qDebug()<<"true";
             label->setFont(SelectFont);
             QFontMetrics XY(label->font());
-            int X=XY.horizontalAdvance(Lines[visibleLyricLine].Context);
-            int Y=XY.height();
+            int X=XY.horizontalAdvance(Lines[visibleLyricLine].Context)+2*label->SDoffset;
+            int Y=XY.height()+2*label->SDoffset;
             label->resize(X,Y);
             const int MaxX=std::max(0, LyricWindow.width()-X);//边界条件判断以及纠正
             const int MaxY=std::max(0, LyricWindow.height()-Y);
@@ -437,7 +486,7 @@ int main(int argc, char* argv[])
         label->setPalette(Palette);//赋值
     });
     QObject::connect(button_in,&QPushButton::clicked,Page_main,
-    [label,&visibleLyric,timer,LyricWord_count,&ElapsedTimer,&visibleLyricLine,LyricLine_count,&Lines,&lasttime]() { // 按钮1信号槽
+    [label,&visibleLyric,timer,LyricWord_count,&ElapsedTimer,&visibleLyricLine,LyricLine_count,&Lines,&lasttime,&lyricPlaying]() { // 按钮1信号槽
         timer->stop();
         if(Lines.empty()) // 防止段错误，边界检查
         {
@@ -448,9 +497,10 @@ int main(int argc, char* argv[])
         visibleLyricLine=-1;
         visibleLyric=0;
         lasttime=0;
+        lyricPlaying=1;
         LyricWord_count->setText(QString::number(visibleLyric));
         LyricLine_count->setText(QString::number(0));
-        timer->start(50);
+        timer->start(16);
         ElapsedTimer.start();
     });
     QObject::connect(button_out,&QPushButton::clicked,Page_main,
@@ -463,12 +513,12 @@ int main(int argc, char* argv[])
         LyricLine_count->setText(QString::number(0));
     });
     auto* NetworkRequset=new QNetworkAccessManager(&window);
-    auto* Networktrial=new QPushButton(Page_setting);
     QObject::connect(Networktrial,&QPushButton::clicked,Page_setting,//网络查询
-    [NetworkRequset,&songsInfo,ParseStream,&Lines,&visibleLyricLine,LyricWord_count,timer,&visibleLyric,label,LyricLine_count](){
+    [NetworkRequset,&songsInfo,ParseStream,&Lines,&visibleLyricLine,LyricWord_count,timer,&visibleLyric,label,LyricLine_count,
+    &SmtcArtist,&Smtctimeline,&SmtcSongsname,button_in](){
         QUrl url("https://music.163.com/api/search/get/web");//查询歌曲初始URL
         QUrlQuery query;//查询参数拼接
-        query.addQueryItem("s","源流懐古 Halozy");
+        query.addQueryItem("s",SmtcSongsname+" "+SmtcArtist);
         query.addQueryItem("type","1");
         query.addQueryItem("limit","10");
         query.addQueryItem("offset","0");
@@ -478,7 +528,8 @@ int main(int argc, char* argv[])
         QNetworkReply* reply=NetworkRequset->get(Request);//先拿到 reply，再连接信号
         songsInfo.clear();
         QObject::connect(reply,&QNetworkReply::finished,NetworkRequset,
-        [reply,&songsInfo,NetworkRequset,ParseStream,&Lines,&visibleLyricLine,LyricWord_count,timer,&visibleLyric,label,LyricLine_count](){
+        [reply,&songsInfo,NetworkRequset,ParseStream,&Lines,&visibleLyricLine,LyricWord_count,timer,&visibleLyric,label,
+        LyricLine_count,button_in,&SmtcArtist,&SmtcSongsname](){
             if(reply->error()!=QNetworkReply::NoError)//联网检查
             {
                 qDebug()<<"网络错误"<<reply->errorString();
@@ -553,7 +604,8 @@ int main(int argc, char* argv[])
             QNetworkReply* song_reply=NetworkRequset->get(songsRequset);
             qDebug()<<song_url.toString();
             QObject::connect(song_reply,&QNetworkReply::finished,NetworkRequset,//歌词获取
-            [song_reply,&songsInfo,NetworkRequset,ParseStream,&Lines,&visibleLyricLine,LyricWord_count,timer,&visibleLyric,label,LyricLine_count](){
+            [song_reply,&songsInfo,NetworkRequset,ParseStream,&Lines,&visibleLyricLine,LyricWord_count,timer,
+            &visibleLyric,label,LyricLine_count,button_in,&SmtcArtist,&SmtcSongsname](){
                 if(song_reply->error()!=QNetworkReply::NoError)//联网检查
                 {
                     qDebug()<<"歌词获取时网络错误"<<song_reply->errorString();
@@ -575,10 +627,24 @@ int main(int argc, char* argv[])
                     return;
                 }
                 QJsonObject Object=document.object();
-                QJsonValue lyric=Object.value("lyric");//lyric
+                qDebug().noquote()<<QString::fromUtf8(Bytes);
+                if(Object.value("nolyric").toBool(false))
+                {
+                    qDebug()<<"纯音乐";
+                    Lyric_Line nolyric_sample;
+                    nolyric_sample.Context="纯音乐："+SmtcSongsname+"~"+SmtcArtist;
+                    nolyric_sample.Time=0;
+                    Lines.clear();
+                    Lines.push_back(nolyric_sample);
+                    button_in->click();
+                    return;
+                }
+                QJsonValue lyric=Object.value("lrc").toObject().value("lyric");
+                if(!lyric.isString())//兼容直接放在根节点
+                lyric=Object.value("lyric");
                 if(!lyric.isString())
                 {
-                    qDebug()<<"lyric根节点非字符串";
+                    qDebug()<<"lyric根节点非字符串"<<Object.keys();
                     return;
                 }
                 QString text=lyric.toString();
@@ -592,15 +658,16 @@ int main(int argc, char* argv[])
                     timer->stop();
                     visibleLyric=0;
                     label->clear();
-
                     Lines=std::move(Temp_Lyric);
                     visibleLyricLine=-1;
                     LyricWord_count->setText(QString::number(visibleLyric));
                     LyricLine_count->setText(QString::number(0));
+                    button_in->click();
                 }
             });
         });
     });
+    Networktrial->click();
     auto* layout=new QVBoxLayout(&window);
     auto* layout_Page_main=new QVBoxLayout(Page_main);
     auto* layout_Page_setting=new QVBoxLayout(Page_setting);
@@ -618,7 +685,6 @@ int main(int argc, char* argv[])
     layout_Page_setting_size->addWidget(Size_label);
     layout_Page_setting_size->addWidget(Size_Input);
     layout_Page_setting_size->addWidget(button_file);
-    layout_Page_setting_size->addWidget(Networktrial);
     layout_Page_setting_size->addStretch();
     layout_Page_setting->addLayout(layout_Page_setting_size);
     LyricWindow.show();
