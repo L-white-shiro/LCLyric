@@ -283,35 +283,39 @@ int main(int argc, char* argv[])
         LyricWord_count->setText(QString::number(visibleLyric));
         LyricLine_count->setText(QString::number(0));
     });
-    qint64 lasttime=0;
-    int Skip=0;
+    qint64 lasttime=-1;
+    int Skip=0,flag=0;
+    qint64 lastDisplayTime=0,previousI=0,previousword=0;
+    std::vector<int>lyricLine;
     QObject::connect(timer,&QTimer::timeout,&window,//超时器信号槽
-    [&visibleLyric,label,timer,LyricWord_count,&visibleLyricLine,&Lines,
-    &ElapsedTimer,LyricLine_count,&LyricWindow,&SmtcPositionMS,&SmtcPositionchange,&lasttime,&Playing,rotatedNew,&Skip]() {
+    [&visibleLyric,label,timer,LyricWord_count,&visibleLyricLine,&Lines,&flag,&lyricLine,
+    &ElapsedTimer,LyricLine_count,&LyricWindow,&SmtcPositionMS,&SmtcPositionchange,&lasttime,&Playing,rotatedNew,&Skip,&lastDisplayTime,&previousI,&previousword]() {
         if(Playing!=1)
         {
-        return;
+            return;
         }
         int i=-1;//行筛选
+        if(SmtcPositionchange)
+        {
+            if(lasttime<0 || lasttime!=SmtcPositionMS)
+            {
+            if(SmtcPositionMS<lastDisplayTime && lastDisplayTime-SmtcPositionMS<300)//小幅回退检测
+            previousword=(lastDisplayTime-Lines[previousI].Time)/150+1;
+
+            lasttime=SmtcPositionMS;
+            ElapsedTimer.restart();
+            }
+            SmtcPositionchange=0;
+        }
         qint64 TIMESCAN=ElapsedTimer.elapsed()+SmtcPositionMS;
-        if(SmtcPositionchange && lasttime!=SmtcPositionMS)
-        {
-        qint64 waittoupdate=0;
-        while(TIMESCAN>waittoupdate+SmtcPositionMS && Playing==1)
-        {
-            waittoupdate=ElapsedTimer.elapsed();
-            QThread::msleep(16);
-        }
-        TIMESCAN=SmtcPositionMS;
-        ElapsedTimer.restart();
-        SmtcPositionchange=0;
-        lasttime=SmtcPositionMS;
-        }
+        lastDisplayTime=TIMESCAN;
         for(std::size_t I=0;I<Lines.size();++I)
         {
             if(Lines[I].Time>TIMESCAN)break;
             i=I;
         }
+        if(previousI>=0 && i<previousI && (Lines[previousI].Time-TIMESCAN)<1000)i=previousI;//保护回调
+        previousI=i;
         if(i==-1)
         {
             label->clear();
@@ -320,11 +324,19 @@ int main(int argc, char* argv[])
         bool IfChange;//换行设定随机歌词位置
         if(visibleLyricLine!=i)
         {
+            previousword=0;
             IfChange=1;
-            Skip=0;
+            flag=1;
         }
         else IfChange=0;
         visibleLyricLine=i;//有效筛选，进入播放环节
+        QString allLine=Lines[visibleLyricLine].Context;
+        if(allLine.isEmpty())
+        {
+            label->clear();
+            lyricLine.clear();
+            return;
+        }
         if(IfChange)
         {
             label->L_angle=QRandomGenerator::global()->bounded(-10, 10);
@@ -350,39 +362,56 @@ int main(int argc, char* argv[])
 
             label->setorigin(QPointF(Cx-bx/2,Cy-by/2));
         }
-        qint64 Line_Elapsed=TIMESCAN-Lines[visibleLyricLine].Time;//开始时间
-        qint64 LineWord_display=std::min(Line_Elapsed/150+1+Skip,Lines[visibleLyricLine].Context.size());//目前行歌词进度
-        QString allLine=Lines[visibleLyricLine].Context;
-        if(LineWord_display>0 && LineWord_display<allLine.size())//跳过单词+括号
+        if(flag)
         {
-            QChar nextChar=allLine.at(LineWord_display);
-            if(nextChar.isLetter() && nextChar.unicode()<128)
+            lyricLine.clear();
+            qsizetype I=0;
+            while(I<allLine.size())
             {
-                int LAST=LineWord_display;
-                while(LineWord_display<allLine.size() && allLine.at(LineWord_display).isLetter() && allLine.at(LineWord_display).unicode()<128)
+                QChar nextChar=allLine.at(I);
+                if(nextChar.isLetter() && nextChar.unicode()<128)
                 {
-                    ++LineWord_display;
+                    while(I<allLine.size())
+                    {
+                        const QChar char1=allLine.at(I);
+                        if (!char1.isLetter() || char1.unicode()>=128)break;
+                        ++I;
+                    }
                 }
-                Skip+=LineWord_display-LAST;
-            }
-            else if(nextChar=='(' && LineWord_display>1)
-            {
-                int right=allLine.indexOf(')',LineWord_display);
-                if (right!=-1 && right-LineWord_display<20)
+                else if(nextChar=='(' && I>0)
                 {
-                    Skip=right-LineWord_display+1;
-                    LineWord_display=right+1;
+                    while(I<allLine.size())
+                    {
+                        const QChar char1=allLine.at(I);
+                        ++I;
+                        if (char1==')')break;
+                    }
                 }
+                else if(nextChar==u'（' && I>0)
+                {
+                    while(I<allLine.size())
+                    {
+                        const QChar char1=allLine.at(I);
+                        ++I;
+                        if (char1==u'）')break;
+                    }
+                }
+                else ++I;
+                lyricLine.push_back(I);
             }
         }
+        flag=0;
+        qint64 Line_Elapsed=TIMESCAN-Lines[visibleLyricLine].Time;//开始时间
+        qint64 LineWord_display=std::max(qint64(0),std::min(std::max(Line_Elapsed/150+1,previousword),qint64(lyricLine.size())-1));//目前行歌词进度
         visibleLyric=int(LineWord_display);
-        label->setText(allLine.left(LineWord_display));
-        LyricWord_count->setText(QString::number(LineWord_display));
+        label->setText(allLine.left(lyricLine[visibleLyric]));
+        LyricWord_count->setText(QString::number(lyricLine[visibleLyric]));
         LyricLine_count->setText(QString::number(visibleLyricLine+1));
-        if(Lines.size()!=0 && visibleLyricLine+1>=Lines.size() && LineWord_display>=Lines[visibleLyricLine].Context.size()&&TIMESCAN-Lines[visibleLyricLine].Time>7000)
+        if(visibleLyricLine+1>=qsizetype(Lines.size()) && visibleLyric>=lyricLine.size()-1 && TIMESCAN-Lines[visibleLyricLine].Time>7000)
         {
             timer->stop();
             label->clear();
+            lyricLine.clear();
             return;
         }
     });
@@ -556,7 +585,6 @@ int main(int argc, char* argv[])
         label->clear();
         visibleLyricLine=-1;
         visibleLyric=0;
-        lasttime=0;
         LyricWord_count->setText(QString::number(visibleLyric));
         LyricLine_count->setText(QString::number(0));
         timer->start(16);
@@ -574,7 +602,7 @@ int main(int argc, char* argv[])
     auto* NetworkRequset=new QNetworkAccessManager(&window);
     QObject::connect(Waiting,&QTimer::timeout,Page_setting,//网络查询
     [NetworkRequset,&songsInfo,ParseStream,&Lines,&visibleLyricLine,LyricWord_count,timer,&visibleLyric,label,LyricLine_count,
-    &SmtcArtist,&Smtctimeline,&SmtcSongsname,button_in](){
+    &SmtcArtist,&Smtctimeline,&SmtcSongsname,button_in,&previousI,&previousword,&lastDisplayTime,&lasttime,&flag](){
         QUrl url("https://music.163.com/api/search/get/web");//查询歌曲初始URL
         QUrlQuery query;//查询参数拼接
         query.addQueryItem("s",SmtcSongsname+" "+SmtcArtist);
@@ -588,7 +616,7 @@ int main(int argc, char* argv[])
         songsInfo.clear();
         QObject::connect(reply,&QNetworkReply::finished,NetworkRequset,
         [reply,&songsInfo,NetworkRequset,ParseStream,&Lines,&visibleLyricLine,LyricWord_count,timer,&visibleLyric,label,
-        LyricLine_count,button_in,&SmtcArtist,&SmtcSongsname](){
+        LyricLine_count,button_in,&SmtcArtist,&SmtcSongsname,&previousI,&previousword,&lastDisplayTime,&lasttime,&flag](){
             if(reply->error()!=QNetworkReply::NoError)//联网检查
             {
                 qDebug()<<"网络错误"<<reply->errorString();
@@ -664,7 +692,7 @@ int main(int argc, char* argv[])
             qDebug()<<song_url.toString();
             QObject::connect(song_reply,&QNetworkReply::finished,NetworkRequset,//歌词获取
             [song_reply,&songsInfo,NetworkRequset,ParseStream,&Lines,&visibleLyricLine,LyricWord_count,timer,
-            &visibleLyric,label,LyricLine_count,button_in,&SmtcArtist,&SmtcSongsname](){
+            &visibleLyric,label,LyricLine_count,button_in,&SmtcArtist,&SmtcSongsname,&previousI,&previousword,&lastDisplayTime,&lasttime,&flag](){
                 if(song_reply->error()!=QNetworkReply::NoError)//联网检查
                 {
                     qDebug()<<"歌词获取时网络错误"<<song_reply->errorString();
@@ -717,6 +745,12 @@ int main(int argc, char* argv[])
                     timer->stop();
                     visibleLyric=0;
                     label->clear();
+                    visibleLyricLine=-1;
+                    previousI=0;
+                    previousword=0;
+                    lastDisplayTime=0;
+                    lasttime=-1;
+                    flag=0;
                     Lines=std::move(Temp_Lyric);
                     visibleLyricLine=-1;
                     LyricWord_count->setText(QString::number(visibleLyric));
