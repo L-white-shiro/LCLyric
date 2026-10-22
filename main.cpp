@@ -5,6 +5,7 @@ struct Lyric_Line
     qint64 Time;
     QString Context;
 };
+struct LyricBlock;
 QRegularExpression Pattern_nonms(
     R"(^\[(\d{2}):([0-5]\d)\](.*)$)"
     );
@@ -17,7 +18,7 @@ QRegularExpression Pattern_non_000ms(
 struct songsStructinfo
 {
     qint64 SID,albumID,Duration;
-    QString Artists_name[20],Songs_Name;
+    QString Artists_name[50],Songs_Name;
 };
 
 using SessionManager=winrt::Windows::Media::Control::GlobalSystemMediaTransportControlsSessionManager;
@@ -39,7 +40,6 @@ int main(int argc, char* argv[])
     bool creator=QDir().mkpath(ConfigDir);//创建目录
     if(!creator)qDebug()<<"目录创建失败";
     QString FilePath=QDir(ConfigDir).filePath("setting.json");//拼接文件路径
-    qDebug()<<ConfigDir;
     QWidget LyricWindow;//歌词显示窗口
     QScreen* Screen=QGuiApplication::primaryScreen();//窗口查找
 
@@ -69,20 +69,23 @@ int main(int argc, char* argv[])
     Top_layout->addStretch();
     auto* Page_main=new QWidget(&window);//主页面
     auto* Page_setting=new QWidget(&window);//设置页面
-    auto* Stack=new QStackedWidget(&window); //页面堆叠
+    auto* Stack=new QStackedWidget(&window);//页面堆叠
     Stack->addWidget(Page_main);//index 0
     Stack->addWidget(Page_setting);//index 1
     QElapsedTimer ElapsedTimer;//计时器
     auto* label=new Lyriclabel(&LyricWindow); //主显示区
-    auto* button_in=new QPushButton("显示示例", Page_main); //显示按钮
-    auto* button_out=new QPushButton("清空", Page_main); //清空页面
+    auto* button_in=new QPushButton("开始",Page_main); //显示按钮
+    auto* button_out=new QPushButton("暂停",Page_main); //清空页面
     auto* button_ColorChoose=new QPushButton("选择颜色",Page_setting);//颜色选择
     auto* button_FontChoose=new QPushButton("选择字体",Page_setting);//字体选择
     auto* Size_Input=new QLineEdit(Page_setting);//字号输入
     auto* timer=new QTimer(&window); //超时器
-    auto* OpenFile=new QPushButton("打开文件",Page_main);//文件打开按钮
-    auto* LyricWord_count=new QLabel(QString::number(visibleLyric), Page_main); // 测试用歌词字数展示
-    auto* LyricLine_count=new QLabel(QString::number(0),Page_main); // 测试用歌词行数目展示
+    auto* OpenFile=new QPushButton("本地歌词读取",Page_main);//文件打开按钮
+    auto* LyricWord_count=new QLabel(QString::number(visibleLyric),Page_main); //测试用歌词字数展示
+    auto* LyricLine_count=new QLabel(QString::number(0),Page_main); //测试用歌词行数目展示
+    auto* Lyricshake=new QCheckBox("文字抖动",Page_setting);//字体抖动按钮
+    auto* LyricOpacity=new QCheckBox("文字淡入",Page_setting);//淡入按钮
+    auto* LyricShadow=new QCheckBox("文字阴影",Page_setting);//阴影按钮
     qint64 SmtcPositionMS=0,Smtctimeline=0;//Smtc接收
     QString SmtcArtist="",SmtcSongsname="",LastSong="";
     bool SmtcPositionchange=0,Smtcsongschange=0;
@@ -92,7 +95,7 @@ int main(int argc, char* argv[])
     qint64 lasttime=-1;//超时器用变量
     int Skip=0,flag=0;
     qint64 lastDisplayTime=0,previousI=0,previousword=0;
-    std::vector<int>lyricLine;
+    std::vector<LyricBlock>lyricblock;//歌词块切分
     auto Thread=QThread::create([&window,&SmtcPositionMS,&SmtcPositionchange,&Smtctimeline,&lyricPlaying
     ,&SmtcArtist,&SmtcSongsname,&LastSong,&Smtcsongschange,&Playing,timer,label,Waiting]()//SMTC
     {
@@ -169,7 +172,7 @@ int main(int argc, char* argv[])
                                                 label->clear();
                                                 Smtcsongschange=1;
                                                 LastSong=title;
-                                                Waiting->start(1500);
+                                                Waiting->start(1500);//waiting连续切歌防抖
                                             }
                                         },
                                         Qt::QueuedConnection);
@@ -199,8 +202,6 @@ int main(int argc, char* argv[])
         return;
     }
     });
-    Thread->setParent(&app);
-    Thread->start();
     QObject::connect(Top_button_setting,&QPushButton::clicked,&window,//翻设置页面
     [Stack,Top_button_main,Top_button_setting](){
         Stack->setCurrentIndex(1);
@@ -263,7 +264,7 @@ int main(int argc, char* argv[])
     };
     QObject::connect(OpenFile,&QPushButton::clicked,Page_main,//打开文件
     [&window,timer,&visibleLyric,label,LyricWord_count,&Lines,&visibleLyricLine,LyricLine_count,ParseStream,
-    &previousI,&previousword,&lasttime,&lastDisplayTime,&flag,&lyricLine]() {
+    &previousI,&previousword,&lasttime,&lastDisplayTime,&flag,&lyricblock]() {
         QString File=QFileDialog::getOpenFileName(&window,"选择文件",QString(),"文本文件(*.txt);;歌词文件(*.lrc)");
         if(File.isEmpty())return;
         QFile file(File);
@@ -287,14 +288,21 @@ int main(int argc, char* argv[])
         lasttime=-1;
         lastDisplayTime=0;
         flag=0;
-        lyricLine.clear();
+        lyricblock.clear();
         Lines=std::move(Temp_Lyric);
         visibleLyricLine=-1;
         LyricWord_count->setText(QString::number(visibleLyric));
         LyricLine_count->setText(QString::number(0));
     });
+    bool hasplay=0;//歌曲进行中判断，避免用户回退误判
+    auto* topmostTimer=new QTimer(&window);
+    topmostTimer->setInterval(3000);
+    QObject::connect(topmostTimer,&QTimer::timeout,&window,//置顶同步
+    [&LyricWindow](){
+    LyricWindow.setWindowFlags(Qt::FramelessWindowHint |Qt::WindowStaysOnTopHint |Qt::Tool | Qt::WindowTransparentForInput |Qt::WindowDoesNotAcceptFocus);
+    });
     QObject::connect(timer,&QTimer::timeout,&window,//超时器信号槽
-    [&visibleLyric,label,timer,LyricWord_count,&visibleLyricLine,&Lines,&flag,&lyricLine,
+    [&visibleLyric,label,timer,LyricWord_count,&visibleLyricLine,&Lines,&flag,&lyricblock,&hasplay,
     &ElapsedTimer,LyricLine_count,&LyricWindow,&SmtcPositionMS,&SmtcPositionchange,&lasttime,&Playing,rotatedNew,&Skip,&lastDisplayTime,&previousI,&previousword]() {
         if(Playing!=1)
         {
@@ -305,16 +313,26 @@ int main(int argc, char* argv[])
         {
             if(lasttime<0 || lasttime!=SmtcPositionMS)
             {
-                if(SmtcPositionMS<lastDisplayTime && lastDisplayTime-SmtcPositionMS<300 && previousI>=0 && static_cast<std::size_t>(previousI)<Lines.size())//小幅回退检测
+            if(SmtcPositionMS<lastDisplayTime && lastDisplayTime-SmtcPositionMS<300 &&
+            previousI>=0 && static_cast<std::size_t>(previousI)<Lines.size())//小幅回退检测
             previousword=(lastDisplayTime-Lines[previousI].Time)/150+1;
-
             lasttime=SmtcPositionMS;
             ElapsedTimer.restart();
             }
             SmtcPositionchange=0;
         }
-        qint64 TIMESCAN=ElapsedTimer.elapsed()+SmtcPositionMS;
+        qint64 TIMESCAN=ElapsedTimer.elapsed()+SmtcPositionMS;//处理时间戳
+        if(hasplay && TIMESCAN<lastDisplayTime)//smtc同步回退判定
+        {
+            const qint64 backtime=lastDisplayTime-SmtcPositionMS;
+            if(backtime<300)//300+认定为用户回退，否则为smtc同步回退
+            {
+                TIMESCAN=lastDisplayTime;
+            }
+        }
         lastDisplayTime=TIMESCAN;
+        label->setposition(TIMESCAN);
+        hasplay=1;
         for(std::size_t I=0;I<Lines.size();++I)
         {
             if(Lines[I].Time>TIMESCAN)break;
@@ -340,11 +358,12 @@ int main(int argc, char* argv[])
         if(allLine.isEmpty())
         {
             label->clear();
-            lyricLine.clear();
+            lyricblock.clear();
             return;
         }
         if(IfChange)
         {
+            hasplay=0;
             label->L_angle=QRandomGenerator::global()->bounded(-10, 10);
             QFontMetrics XY(label->font());
             const qreal bx=XY.horizontalAdvance(Lines[visibleLyricLine].Context)+2*label->SDoffset;//带边界XY值
@@ -370,7 +389,8 @@ int main(int argc, char* argv[])
         }
         if(flag)
         {
-            lyricLine.clear();
+            lyricblock.clear();
+            LyricBlock TEMP;
             qsizetype I=0;
             while(I<allLine.size())
             {
@@ -402,22 +422,35 @@ int main(int argc, char* argv[])
                         if (char1==u'）')break;
                     }
                 }
+                else if(nextChar==u' ')
+                {
+                    while(I<allLine.size())
+                    {
+                        const QChar char1=allLine.at(I);
+                        ++I;
+                        if (char1== u' ')break;
+                    }
+                }
                 else ++I;
-                lyricLine.push_back(I);
+                TEMP.end=I;
+                TEMP.startMS=Lines[visibleLyricLine].Time+lyricblock.size()*150;
+                lyricblock.push_back(TEMP);
             }
         }
         flag=0;
         qint64 Line_Elapsed=TIMESCAN-Lines[visibleLyricLine].Time;//开始时间
-        qint64 LineWord_display=std::max(qint64(0),std::min(std::max(Line_Elapsed/150+1,previousword),qint64(lyricLine.size())-1));//目前行歌词进度
+        qint64 LineWord_display=std::max(qint64(0),std::min(std::max(Line_Elapsed/150+1,previousword),qint64(lyricblock.size())));//目前行歌词进度
+        int changecompare=visibleLyric;
         visibleLyric=int(LineWord_display);
-        label->setText(allLine.left(lyricLine[visibleLyric]));
-        LyricWord_count->setText(QString::number(lyricLine[visibleLyric]));
-        LyricLine_count->setText(QString::number(visibleLyricLine+1));
-        if(visibleLyricLine+1>=qsizetype(Lines.size()) && visibleLyric>=lyricLine.size()-1 && TIMESCAN-Lines[visibleLyricLine].Time>7000)
+        if(changecompare!=visibleLyric && visibleLyric!=0 || IfChange)
         {
-            timer->stop();
+            label->setText(allLine,lyricblock,visibleLyric);
+            LyricWord_count->setText(QString::number(lyricblock[visibleLyric-1].end));
+            LyricLine_count->setText(QString::number(visibleLyricLine+1));
+        }
+        if(visibleLyricLine+1>=qsizetype(Lines.size()) && visibleLyric>=lyricblock.size() && TIMESCAN-Lines[visibleLyricLine].Time>7000)
+        {
             label->clear();
-            lyricLine.clear();
             return;
         }
     });
@@ -429,15 +462,22 @@ int main(int argc, char* argv[])
     auto* button_file=new QPushButton("输出",Page_setting);
     button_file->hide();
     Thread->setParent(&app);
-    QObject::connect(button_file,&QPushButton::clicked,Page_setting,[label,FilePath](){//保存用户设置
+    Thread->start();
+    QObject::connect(button_file,&QPushButton::clicked,Page_setting,[label,FilePath,LyricShadow,Lyricshake,LyricOpacity](){//保存用户设置
         QSaveFile file(FilePath);
         QString Fonttext=label->font().toString();//截取字体信息
         QColor Color=label->palette().color(QPalette::WindowText);//截取颜色信息
         QString ColorText=Color.name(QColor::HexRgb);
+        bool shadow=LyricShadow->isChecked();
+        bool shake=Lyricshake->isChecked();
+        bool opacity=LyricOpacity->isChecked();
         QJsonObject Object;//Json对象
         Object.insert("Version",1);//组织json字段
         Object.insert("Font",Fonttext);
         Object.insert("Color",ColorText);
+        Object.insert("LyricShadow",shadow);
+        Object.insert("LyricShake",shake);
+        Object.insert("LyricOpacity",opacity);
         QJsonDocument document(Object);//Json文件打包对象
         QByteArray Byte=document.toJson(QJsonDocument::Indented);
         qDebug().noquote()<<Byte;
@@ -511,6 +551,24 @@ int main(int argc, char* argv[])
             qDebug()<<"颜色错误";
             return;
         }
+        QJsonValue shadowValue=Object.value("LyricShadow");
+        if(!shadowValue.isBool())
+        {
+            qDebug()<<"阴影格式错误";
+            return;
+        }
+        QJsonValue shakeValue=Object.value("LyricShake");
+        if(!shakeValue.isBool())
+        {
+            qDebug()<<"抖动格式错误";
+            return;
+        }
+        QJsonValue opacityValue=Object.value("LyricOpacity");
+        if(!opacityValue.isBool())
+        {
+            qDebug()<<"淡入格式错误";
+            return;
+        }
         QFont Fontnew=label->font();
         bool fontchange=Fontnew.fromString(fontValue.toString());
         if(fontchange && Fontnew.pointSize()>=8 && Fontnew.pointSize()<=96)//字号大小，写入成功检查
@@ -526,12 +584,15 @@ int main(int argc, char* argv[])
             setcolor.setColor(QPalette::WindowText,colornew);
             label->setPalette(setcolor);
         }
+        LyricShadow->setChecked(shadowValue.toBool());
+        LyricOpacity->setChecked(opacityValue.toBool());
+        Lyricshake->setChecked(shakeValue.toBool());
+        label->update();
     };
-    LoadSetting();
     auto* Size_validator=new QIntValidator(8,96,Size_Input);//字号验证器
     Size_Input->setValidator(Size_validator);
     QObject::connect(Size_Input,&QLineEdit::returnPressed,Page_setting,//字号更改
-    [label,Size_Input,&Size,&Lines,&visibleLyricLine,&LyricWindow]{
+    [label,Size_Input,&Size,&Lines,&visibleLyricLine,&LyricWindow,button_file]{
         if(!Size_Input->hasAcceptableInput())return;
         Size=Size_Input->text().toInt();
         QFont font=label->font();
@@ -549,9 +610,10 @@ int main(int argc, char* argv[])
         const int SafeY=std::min(label->y(),MaxY);
         label->move(SafeX, SafeY);
         }
+        button_file->click();
     });
     QObject::connect(button_FontChoose,&QPushButton::clicked,Page_setting,
-    [&window,label,&Lines,&visibleLyricLine,&LyricWindow](){//字体选择
+    [&window,label,&Lines,&visibleLyricLine,&LyricWindow,button_file](){//字体选择
         bool Accept=0;
         QFont SelectFont=QFontDialog::getFont(&Accept,label->font(),&window,"选择字体");
             if(!Accept)return;
@@ -569,20 +631,40 @@ int main(int argc, char* argv[])
             const int SafeX=std::min(label->x(),MaxX);
             const int SafeY=std::min(label->y(),MaxY);
             }
-            else label->setFont(SelectFont);
+        else label->setFont(SelectFont);
+        button_file->click();
     });
     QObject::connect(button_ColorChoose,&QPushButton::clicked,Page_setting,
-    [&window,label](){//颜色选择
+    [&window,label,button_file](){//颜色选择
         QColor CurrentColor=label->palette().color(QPalette::WindowText);
         QColor SelectColor=QColorDialog::getColor(CurrentColor,&window,"选择颜色");
         if(!SelectColor.isValid())return;
         QPalette Palette=label->palette();//拷贝副本
         Palette.setColor(QPalette::WindowText,SelectColor);//改副本
         label->setPalette(Palette);//赋值
+        button_file->click();
+    });
+    QObject::connect(Lyricshake,&QCheckBox::toggled,[&label,button_file](bool checked){//文字抖动信号槽
+        if(checked==1)label->setshake=1;
+        else label->setshake=0;
+        label->update();
+        button_file->click();
+    });
+    QObject::connect(LyricOpacity,&QCheckBox::toggled,[&label,button_file](bool checked){//文字淡入信号槽
+        if(checked==1)label->setopacity=1;
+        else label->setopacity=0;
+        label->update();
+        button_file->click();
+    });
+    QObject::connect(LyricShadow,&QCheckBox::toggled,[&label,button_file](bool checked){//文字淡入信号槽
+        if(checked==1)label->setshadow=1;
+        else label->setshadow=0;
+        label->update();
+        button_file->click();
     });
     QObject::connect(button_in,&QPushButton::clicked,Page_main,
     [label,&visibleLyric,timer,LyricWord_count,&ElapsedTimer,&visibleLyricLine,LyricLine_count,&Lines,&lasttime
-    ,&previousI,&previousword,&lastDisplayTime,&flag,&lyricLine]() { // 按钮1信号槽
+    ,&previousI,&previousword,&lastDisplayTime,&flag,&lyricblock]() { // 按钮1信号槽
         timer->stop();
         if(Lines.empty()) // 防止段错误，边界检查
         {
@@ -596,7 +678,7 @@ int main(int argc, char* argv[])
         lasttime=-1;
         lastDisplayTime=0;
         flag=0;
-        lyricLine.clear();
+        lyricblock.clear();
         label->clear();
         LyricWord_count->setText(QString::number(visibleLyric));
         LyricLine_count->setText(QString::number(0));
@@ -604,7 +686,8 @@ int main(int argc, char* argv[])
         ElapsedTimer.start();
     });
     QObject::connect(button_out,&QPushButton::clicked,Page_main,
-    [label,&visibleLyric,timer,LyricWord_count,&visibleLyricLine,LyricLine_count,&previousI,&previousword,&lasttime,&lastDisplayTime,&flag,&lyricLine]() {//clear清屏
+    [label,&visibleLyric,timer,LyricWord_count,&visibleLyricLine,LyricLine_count,&previousI,&previousword,
+    &lasttime,&lastDisplayTime,&flag,&lyricblock]() {//clear清屏
         timer->stop();
         label->clear();
         visibleLyric=0;
@@ -614,14 +697,14 @@ int main(int argc, char* argv[])
         lasttime=-1;
         lastDisplayTime=0;
         flag=0;
-        lyricLine.clear();
+        lyricblock.clear();
         LyricWord_count->setText(QString::number(visibleLyric));
         LyricLine_count->setText(QString::number(0));
     });
     auto* NetworkRequset=new QNetworkAccessManager(&window);
     QObject::connect(Waiting,&QTimer::timeout,Page_setting,//网络查询
     [NetworkRequset,&songsInfo,ParseStream,&Lines,&visibleLyricLine,LyricWord_count,timer,&visibleLyric,label,LyricLine_count,
-    &SmtcArtist,&Smtctimeline,&SmtcSongsname,button_in,&previousI,&previousword,&lastDisplayTime,&lasttime,&flag,&lyricLine](){
+    &SmtcArtist,&Smtctimeline,&SmtcSongsname,button_in,&previousI,&previousword,&lastDisplayTime,&lasttime,&flag,&lyricblock](){
         QUrl url("https://music.163.com/api/search/get/web");//查询歌曲初始URL
         QUrlQuery query;//查询参数拼接
         query.addQueryItem("s",SmtcSongsname+" "+SmtcArtist);
@@ -635,7 +718,7 @@ int main(int argc, char* argv[])
         songsInfo.clear();
         QObject::connect(reply,&QNetworkReply::finished,NetworkRequset,
         [reply,&songsInfo,NetworkRequset,ParseStream,&Lines,&visibleLyricLine,LyricWord_count,timer,&visibleLyric,label,
-        LyricLine_count,button_in,&SmtcArtist,&SmtcSongsname,&previousI,&previousword,&lastDisplayTime,&lasttime,&flag,&lyricLine](){
+        LyricLine_count,button_in,&SmtcArtist,&SmtcSongsname,&previousI,&previousword,&lastDisplayTime,&lasttime,&flag,&lyricblock](){
             if(reply->error()!=QNetworkReply::NoError)//联网检查
             {
                 qDebug()<<"网络错误"<<reply->errorString();
@@ -711,7 +794,7 @@ int main(int argc, char* argv[])
             qDebug()<<song_url.toString();
             QObject::connect(song_reply,&QNetworkReply::finished,NetworkRequset,//歌词获取
             [song_reply,&songsInfo,NetworkRequset,ParseStream,&Lines,&visibleLyricLine,LyricWord_count,timer,
-            &visibleLyric,label,LyricLine_count,button_in,&SmtcArtist,&SmtcSongsname,&previousI,&previousword,&lastDisplayTime,&lasttime,&flag,&lyricLine](){
+            &visibleLyric,label,LyricLine_count,button_in,&SmtcArtist,&SmtcSongsname,&previousI,&previousword,&lastDisplayTime,&lasttime,&flag,&lyricblock](){
                 if(song_reply->error()!=QNetworkReply::NoError)//联网检查
                 {
                     qDebug()<<"歌词获取时网络错误"<<song_reply->errorString();
@@ -770,7 +853,7 @@ int main(int argc, char* argv[])
                     lastDisplayTime=0;
                     lasttime=-1;
                     flag=0;
-                    lyricLine.clear();
+                    lyricblock.clear();
                     Lines=std::move(Temp_Lyric);
                     visibleLyricLine=-1;
                     LyricWord_count->setText(QString::number(visibleLyric));
@@ -780,10 +863,13 @@ int main(int argc, char* argv[])
             });
         });
     });
+    LoadSetting();
     auto* layout=new QVBoxLayout(&window);
     auto* layout_Page_main=new QVBoxLayout(Page_main);
     auto* layout_Page_setting=new QVBoxLayout(Page_setting);
-    auto* layout_Page_setting_size = new QHBoxLayout;
+    auto* layout_Page_setting_size1=new QHBoxLayout(Page_setting);
+    auto* layout_Page_setting_size2=new QHBoxLayout(Page_setting);
+    auto* layout_Page_setting_size3=new QHBoxLayout(Page_setting);
     layout->addWidget(Top_Bar);
     layout->addWidget(Stack);
     layout_Page_main->addWidget(LyricWord_count);
@@ -791,14 +877,20 @@ int main(int argc, char* argv[])
     layout_Page_main->addWidget(OpenFile);
     layout_Page_main->addWidget(button_in);
     layout_Page_main->addWidget(button_out);
-    layout_Page_setting->addWidget(button_ColorChoose);
-    layout_Page_setting->addWidget(button_FontChoose);
+    layout_Page_setting_size1->addWidget(button_ColorChoose);
+    layout_Page_setting_size1->addWidget(button_FontChoose);
     auto* Size_label=new QLabel("字号(pt):",Page_setting);
-    layout_Page_setting_size->addWidget(Size_label);
-    layout_Page_setting_size->addWidget(Size_Input);
-    layout_Page_setting_size->addWidget(button_file);
-    layout_Page_setting_size->addStretch();
-    layout_Page_setting->addLayout(layout_Page_setting_size);
+    layout_Page_setting_size2->addWidget(Size_label);
+    layout_Page_setting_size2->addWidget(Size_Input);
+    layout_Page_setting_size2->addWidget(button_file);
+    layout_Page_setting_size2->addStretch();
+    layout_Page_setting_size3->addWidget(LyricShadow);
+    layout_Page_setting_size3->addWidget(LyricOpacity);
+    layout_Page_setting_size3->addWidget(Lyricshake);
+    layout_Page_setting_size3->addStretch();
+    layout_Page_setting->addLayout(layout_Page_setting_size1);
+    layout_Page_setting->addLayout(layout_Page_setting_size2);
+    layout_Page_setting->addLayout(layout_Page_setting_size3);
     LyricWindow.show();
     window.show(); // NOLINT
     int exitcode=app.exec();//exitcode接收主线程事件循环是否结束，返回0把子线程也结束

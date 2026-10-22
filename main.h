@@ -49,4 +49,5 @@
 #include<winrt/Windows.Foundation.h>
 #include<winrt/Windows.Media.Control.h>
 #include<chrono>
+#include<QCheckBox>
 #endif // MAIN_H
