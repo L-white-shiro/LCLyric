@@ -50,11 +50,13 @@ int main(int argc, char* argv[])
     }
     LyricWindow.setGeometry(Screen->geometry());
     LyricWindow.setWindowFlags(
-        Qt::FramelessWindowHint |
-        Qt::WindowStaysOnTopHint |
-        Qt::Tool |
         Qt::WindowTransparentForInput |
-        Qt::WindowDoesNotAcceptFocus);
+        //Qt::Window | //需要屏幕录制时开启
+        Qt::Tool |
+        Qt::FramelessWindowHint |
+        Qt::WindowStaysOnTopHint
+        );
+    //LyricWindow.setAttribute(Qt::WA_QuitOnClose,false);//需要屏幕录制时开启
     LyricWindow.setAttribute(Qt::WA_TranslucentBackground,true);
     LyricWindow.setAttribute(Qt::WA_ShowWithoutActivating,true);
     auto* Top_Bar=new QWidget(&window);//顶部按钮栏
@@ -299,7 +301,12 @@ int main(int argc, char* argv[])
     topmostTimer->setInterval(3000);
     QObject::connect(topmostTimer,&QTimer::timeout,&window,//置顶同步
     [&LyricWindow](){
-    LyricWindow.setWindowFlags(Qt::FramelessWindowHint |Qt::WindowStaysOnTopHint |Qt::Tool | Qt::WindowTransparentForInput |Qt::WindowDoesNotAcceptFocus);
+    LyricWindow.setWindowFlags(Qt::WindowTransparentForInput |//Qt::Window | //需要屏幕录制时开启
+    Qt::Tool |
+    Qt::FramelessWindowHint |
+    Qt::WindowStaysOnTopHint
+    );
+    LyricWindow.show();
     });
     QObject::connect(timer,&QTimer::timeout,&window,//超时器信号槽
     [&visibleLyric,label,timer,LyricWord_count,&visibleLyricLine,&Lines,&flag,&lyricblock,&hasplay,

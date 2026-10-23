@@ -6,7 +6,7 @@ set(CMAKE_AUTOUIC ON)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(QT NAMES Qt6 Qt5 REQUIRED COMPONENTS Widgets Network)
@@ -14,22 +14,14 @@ find_package(Qt${QT_VERSION_MAJOR} REQUIRED COMPONENTS Widgets Network)
 
 set(PROJECT_SOURCES
         main.cpp
-
-
-
+        main.h
+        Lyriclabel.h
 )
-
-add_executable(smtc_probe smtc_probe.cpp)
-target_compile_features(smtc_probe PRIVATE cxx_std_20)
-target_link_libraries(smtc_probe PRIVATE windowsapp)
-target_compile_options(smtc_probe PRIVATE /utf-8)
 
 if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
     qt_add_executable(untitled1
         MANUAL_FINALIZATION
         ${PROJECT_SOURCES}
-        main.h
-        Lyriclabel.h
     )
 else()
     if(ANDROID)
