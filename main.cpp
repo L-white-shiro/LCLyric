@@ -47,12 +47,12 @@ int main(int argc, char* argv[])
     LyricWindow.setGeometry(Screen->geometry());
     LyricWindow.setWindowFlags(
         Qt::WindowTransparentForInput |
-        //Qt::Window | //需要屏幕录制时开启
-        Qt::Tool |
+    //    Qt::Window | //需要屏幕录制时开启
+        Qt::Tool |//需要屏幕录制时隐藏
         Qt::FramelessWindowHint |
         Qt::WindowStaysOnTopHint
         );
-    //LyricWindow.setAttribute(Qt::WA_QuitOnClose,false);//需要屏幕录制时开启
+   // LyricWindow.setAttribute(Qt::WA_QuitOnClose,false);//需要屏幕录制时开启
     LyricWindow.setAttribute(Qt::WA_TranslucentBackground,true);
     LyricWindow.setAttribute(Qt::WA_ShowWithoutActivating,true);
     auto* Top_Bar=new QWidget(&window);//顶部按钮栏
@@ -214,8 +214,7 @@ int main(int argc, char* argv[])
     });
     Stack->setCurrentIndex(0);
     Top_button_main->setEnabled(false);
-    int isYRC=0;
-    auto ParseStream=[&isYRC](QTextStream &stream)->std::vector<Lyric_Line>{//文件流输入
+    auto ParseStream=[](QTextStream &stream)->std::vector<Lyric_Line>{//文件流输入
         std::vector<Lyric_Line>Temp_Lyric;
         while(!stream.atEnd())
         {
@@ -223,8 +222,8 @@ int main(int argc, char* argv[])
             auto match=Pattern_linefirst.match(Line);
             if(match.hasMatch())
             {
-                isYRC=1;
                 Lyric_Line Lyric_Now;
+                Lyric_Now.isYRC=1;
                 Lyric_Now.Time=match.captured(1).toLongLong();
                 Lyric_Now.Duration=match.captured(2).toLongLong();
                 QRegularExpressionMatchIterator it=Pattern_everyword.globalMatch(match.captured(3));//行外逐字匹配
@@ -239,7 +238,6 @@ int main(int argc, char* argv[])
                 }
                 Lyric_Now.block=i;
                 Temp_Lyric.push_back(Lyric_Now);
-                qDebug()<<Lyric_Now.Context;
             }
             else
             {
@@ -250,7 +248,6 @@ int main(int argc, char* argv[])
                     Lyric_Now.Time=60000LL*match.captured(1).toInt()+1000LL*match.captured(2).toInt()+match.captured(3).toInt()*10LL;
                     Lyric_Now.Context=match.captured(4);
                     Temp_Lyric.push_back(Lyric_Now);
-                    qDebug()<<Lyric_Now.Context;
                 }
                 else
                 {
@@ -261,7 +258,6 @@ int main(int argc, char* argv[])
                         Lyric_Now.Time=60000LL*match.captured(1).toInt()+1000LL*match.captured(2).toInt()+match.captured(3).toInt()*1LL;
                         Lyric_Now.Context=match.captured(4);
                         Temp_Lyric.push_back(Lyric_Now);
-                        qDebug()<<Lyric_Now.Context;
                     }
                     else
                     {
@@ -272,7 +268,6 @@ int main(int argc, char* argv[])
                             Lyric_Now.Time=60000LL*match.captured(1).toInt()+1000LL*match.captured(2).toInt();
                             Lyric_Now.Context=match.captured(3);
                             Temp_Lyric.push_back(Lyric_Now);
-                            qDebug()<<Lyric_Now.Context;
                         }
                     }
                 }
@@ -326,15 +321,17 @@ int main(int argc, char* argv[])
     topmostTimer->setInterval(3000);
     QObject::connect(topmostTimer,&QTimer::timeout,&window,//置顶同步
     [&LyricWindow](){
-    LyricWindow.setWindowFlags(Qt::WindowTransparentForInput |//Qt::Window | //需要屏幕录制时开启
-    Qt::Tool |
+    LyricWindow.setWindowFlags(
+    Qt::WindowTransparentForInput |
+    //Qt::Window | //需要屏幕录制时开启
+    Qt::Tool |//需要屏幕录制时隐藏
     Qt::FramelessWindowHint |
     Qt::WindowStaysOnTopHint
     );
     LyricWindow.show();
     });
     QObject::connect(timer,&QTimer::timeout,&window,//超时器信号槽
-    [&visibleLyric,label,timer,LyricWord_count,&visibleLyricLine,&Lines,&flag,&lyricblock,&hasplay,&isYRC,
+    [&visibleLyric,label,timer,LyricWord_count,&visibleLyricLine,&Lines,&flag,&lyricblock,&hasplay,
     &ElapsedTimer,LyricLine_count,&LyricWindow,&SmtcPositionMS,&SmtcPositionchange,&lasttime,&Playing,rotatedNew,&Skip,&lastDisplayTime,&previousI,&previousword]() {
         if(Playing!=1)
         {
@@ -395,6 +392,7 @@ int main(int argc, char* argv[])
         }
         if(IfChange)
         {
+            hasplay=0;
             label->L_angle=QRandomGenerator::global()->bounded(-10, 10);
             QFontMetrics XY(label->font());
             const qreal bx=XY.horizontalAdvance(Lines[visibleLyricLine].Context)+2*label->SDoffset;//带边界XY值
@@ -475,7 +473,7 @@ int main(int argc, char* argv[])
         visibleLyric=int(LineWord_display);
         if(changecompare!=visibleLyric && visibleLyric!=0 || IfChange)
         {
-            if(isYRC)label->setLyricLine(Lines[visibleLyricLine]);
+            if(Lines[visibleLyricLine].isYRC)label->setLyricLine(Lines[visibleLyricLine]);
             else label->setText(allLine,lyricblock,visibleLyric);
             LyricWord_count->setText(QString::number(lyricblock[visibleLyric-1].end));
             LyricLine_count->setText(QString::number(visibleLyricLine+1));

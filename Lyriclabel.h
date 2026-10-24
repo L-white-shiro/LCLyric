@@ -14,6 +14,7 @@ struct Lyric_Line
     QString Context;
     qint64 wordstartMS[1000];
     QString word[1000];
+    bool isYRC=0;
 };
 struct LyricBlock
 {
@@ -104,6 +105,7 @@ public:
 protected:
     void paintEvent(QPaintEvent *event) override
     {
+
         if(L_text.isEmpty())return;
         QPainter painter(this);
         painter.setRenderHint(QPainter::Antialiasing);//几何抗锯齿
@@ -126,7 +128,7 @@ protected:
         qreal round=2.0*3.1415926*Frequency*seconds;
         if(Block)
         {
-            qDebug()<<"Block";
+
             for(int i=0;i<std::min(visibleLyric,static_cast<int>(Block->size()));++i)
             {
                 const qreal FadeTime=300;//淡入持续时间
@@ -179,6 +181,7 @@ protected:
         }
         else if(!Line.Context.isEmpty())
         {
+            Block=nullptr;
             int k=0;
             for(int i=0;i<Line.block;++i)
             {
