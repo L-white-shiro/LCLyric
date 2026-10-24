@@ -50,4 +50,6 @@
 #include<winrt/Windows.Media.Control.h>
 #include<chrono>
 #include<QCheckBox>
+#define NOMINMAX
+#include<windows.h>
 #endif // MAIN_H

@@ -22,6 +22,8 @@ if(${QT_VERSION_MAJOR} GREATER_EQUAL 6)
     qt_add_executable(untitled1
         MANUAL_FINALIZATION
         ${PROJECT_SOURCES}
+        Network.h
+        AES.h
     )
 else()
     if(ANDROID)
