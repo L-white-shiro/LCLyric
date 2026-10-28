@@ -8,6 +8,8 @@
 装入以下插件<br>
 [InfLink-rs](https://github.com/apoint123/inflink-rs)<br>
 同时在网易云设置-系统-**开启SMTC**<br>
+![](https://github.com/L-white-shiro/LCLyric/blob/main/image/1.png)<br>
+![](https://github.com/L-white-shiro/LCLyric/blob/main/image/2.png)<br>
 重启网易云，确认插件加载成功后，打开.exe文件，播放歌曲即可自动同步目前进度
 
 ### 功能介绍
@@ -17,10 +19,5 @@
 歌词搜索采用网易云歌词api，后续会加入加入QQ音乐和酷狗音乐的支持<br>
 
 ### AI使用注意
-<<<<<<< HEAD
-在Qt学习和少数Debug、逻辑优化方面使用了AI
-AES加密算法采用AI编写
-=======
 在Qt学习和少数Debug、逻辑优化方面使用了AI<br>
-AES加密使用AI编写
->>>>>>> 57532331bb36f18e3afaef571dca8cc8d1ff3a2b
+AES加密算法采用AI编写
