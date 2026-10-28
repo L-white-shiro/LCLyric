@@ -1,5 +1,6 @@
 #ifndef NETWORK_H
 #define NETWORK_H
+#include<QLabel>
 #include<QUrl>
 #include<QUrlQuery>
 #include<QNetworkRequest>
@@ -9,6 +10,7 @@
 #include<QJsonObject>
 #include<QJsonValue>
 #include<QJsonArray>
+#include<QNetworkProxy>
 #include "AES.h"
 #endif // NETWORK_H
 struct songsStructinfo
@@ -20,7 +22,7 @@ class NetWorkQ:public QObject
 {
     Q_OBJECT;
 private:
-
+    QLabel* Debuglabel=nullptr;
 public:
     QNetworkAccessManager* NetworkRequset=nullptr;
     std::vector<songsStructinfo>songsInfo;//动态数组歌词信息
@@ -39,10 +41,14 @@ public:
             ClodeMusic_NormalLyric(SID);
         });
     }
-    void CloudMusic_Normal(QString& SmtcSongsname,QString SmtcArtist)//歌曲id查询，调用cloudmusic_lyric_requeset
+    void setDebug(QLabel* &L)
+    {
+        Debuglabel=L;
+    }
+    void CloudMusic_Normal(QString& SmtcSongsname,QString& SmtcArtist,qint64& Time)//歌曲id查询，调用cloudmusic_lyric_requeset
     {
         QUrl url("https://music.163.com/api/search/get/web");//查询歌曲初始URL
-        QUrlQuery query;//查询参数拼接
+        QUrlQuery query;//查询参数请求头拼接
         query.addQueryItem("s",SmtcSongsname+" "+SmtcArtist);
         query.addQueryItem("type","1");
         query.addQueryItem("limit","10");
@@ -50,13 +56,14 @@ public:
         url.setQuery(query);
         QNetworkRequest Request(url);
         qDebug()<<url.toString();
+        NetworkRequset->setProxy(QNetworkProxy(QNetworkProxy::NoProxy));
         QNetworkReply* reply=NetworkRequset->get(Request);//先拿到 reply，再连接信号
         QObject::connect(reply,&QNetworkReply::finished,NetworkRequset,
-        [reply,this](){
+        [reply,this,Time](){
         songsInfo.clear();
         if(reply->error()!=QNetworkReply::NoError)//联网检查
         {
-            qDebug()<<"网络错误";
+            Debuglabel->setText("网络错误");
             emit(SIDgetfail(reply->errorString()));
             reply->deleteLater();
             return;
@@ -67,31 +74,31 @@ public:
         auto document=QJsonDocument::fromJson(Bytes,&Error);//Json转换
         if(Error.error!=QJsonParseError::NoError)//解析json错误
         {
-            qDebug()<<"网络返回json文件解析失败";
+            Debuglabel->setText("网络返回json文件解析失败");
             return;
         }
         if(!document.isObject())
         {
-            qDebug()<<"网络返回对象错误";
+            Debuglabel->setText("网络返回对象错误");
             return;
         }
         QJsonObject Object=document.object();
         QJsonValue Result=Object.value("result");//扒result
         if(!Result.isObject())
         {
-            qDebug()<<"result根节点非对象";
+            Debuglabel->setText("result根节点非对象");
             return;
         }
         QJsonValue songs=Result.toObject().value("songs");//扒songs
         if(!songs.isArray())
         {
-            qDebug()<<"songs根节点非数组";
+            Debuglabel->setText("songs根节点非数组");
             return;
         }
         auto songsarray=songs.toArray();
         if(songsarray.isEmpty())
         {
-            qDebug()<<"候选列表为空";
+            Debuglabel->setText("候选列表为空");
             return;
         }
         for(const auto& songsNOW:songsarray)
@@ -118,10 +125,17 @@ public:
                 TempSongs.Artists_name[j]=Artist_Name.toString();
                 qDebug().noquote()<<"|"<<TempSongs.Artists_name[j];
                 ++j;
+                if(j>=50)break;
             }
             songsInfo.push_back(TempSongs);
         }
-        emit(SIDReady(songsInfo[0].SID));
+        int target=0;
+        for(const auto& SongsNow:songsInfo)
+        {
+            if(std::abs(SongsNow.Duration-Time)<1500)break;
+            ++target;
+        }
+        emit(SIDReady(songsInfo[target].SID));
         });
     }
     void ClodeMusic_NormalLyric(qint64 SID)//歌词查询
@@ -137,6 +151,7 @@ public:
         [song_reply,this](){
         if(song_reply->error()!=QNetworkReply::NoError)//联网检查
         {
+            Debuglabel->setText("songs根节点非数组");
             qDebug()<<"歌词获取时网络错误"<<song_reply->errorString();
             emit(CloudAPI_Lyric_Fail(song_reply->errorString()));
             return;
@@ -148,13 +163,13 @@ public:
         QJsonDocument document=QJsonDocument::fromJson(Bytes,&Error);//Json转换
         if(Error.error!=QJsonParseError::NoError)//解析json错误
         {
-            qDebug()<<"歌词网络返回json文件解析失败";
+            Debuglabel->setText("歌词网络返回json文件解析失败"+song_reply->errorString());
             emit(CloudAPI_Lyric_Fail(song_reply->errorString()));
             return;
         }
         if(!document.isObject())
         {
-            qDebug()<<"歌词网络返回对象错误";
+            Debuglabel->setText("歌词网络返回对象错误"+song_reply->errorString());
             emit(CloudAPI_Lyric_Fail(song_reply->errorString()));
             return;
         }
@@ -197,13 +212,12 @@ public:
         request.setRawHeader("Referer","https://music.163.com/");
         request.setRawHeader("User-Agent","Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36");
         QByteArray postBody="params="+QByteArray::fromStdString(encryptedHex);//URL请求发送
-        qDebug()<<"params="+QByteArray::fromStdString(encryptedHex);
         QNetworkReply* reply=NetworkRequset->post(request, postBody);
         QObject::connect(reply,&QNetworkReply::finished,NetworkRequset,//歌词获取
         [reply,this](){
         if(reply->error()!=QNetworkReply::NoError)//联网检查
         {
-            qDebug()<<"歌词获取时网络错误"<<reply->errorString();
+            Debuglabel->setText("歌词获取时网络错误"+reply->errorString());
             emit(CloudAPI_YRCLyric_Fail(reply->errorString()));
             return;
         }
@@ -214,13 +228,13 @@ public:
         QJsonDocument document=QJsonDocument::fromJson(Bytes,&Error);//Json转换
         if(Error.error!=QJsonParseError::NoError)//解析json错误
         {
-            qDebug()<<"歌词网络返回json文件解析失败";
+            Debuglabel->setText("歌词网络返回json文件解析失败"+reply->errorString());
             emit(CloudAPI_YRCLyric_Fail(reply->errorString()));
             return;
         }
         if(!document.isObject())
         {
-            qDebug()<<"歌词网络返回对象错误";
+            Debuglabel->setText("歌词网络返回对象错误"+reply->errorString());
             emit(CloudAPI_YRCLyric_Fail(reply->errorString()));
             return;
         }

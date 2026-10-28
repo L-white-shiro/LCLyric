@@ -10,16 +10,16 @@
 #include<cmath>
 struct Lyric_Line
 {
-    qint64 Time,Duration,block;
+    qint64 Time,Duration,block=1;
     QString Context;
-    qint64 wordstartMS[1000];
+    qint64 wordstartMS[1000],wordduration[1000];
     QString word[1000];
     bool isYRC=0;
 };
 struct LyricBlock
 {
     qsizetype end;
-    qint64 startMS;
+    qint64 startMS,blocktime[1000];
 };
 class Lyriclabel:public QWidget
 {
@@ -36,6 +36,7 @@ public:
     qreal L_angle=0;
     bool setshake=0,setopacity=0,setshadow=0;
     int SDoffset=8;
+    qreal FadeTime=300;//淡入时间
     explicit Lyriclabel(QWidget *parent=nullptr):QWidget(parent){
         setAttribute(Qt::WA_TranslucentBackground,true);
     }
@@ -102,8 +103,17 @@ public:
         else L_text=L.Context;
         update();
     }
+    qreal getFadetime()
+    {
+        return FadeTime;
+    }
+    void setFadetime(const qreal& F)
+    {
+        FadeTime=F;
+        update();
+    }
 protected:
-    void paintEvent(QPaintEvent *event) override
+    void paintEvent(QPaintEvent *event) override//绘制逻辑重写
     {
 
         if(L_text.isEmpty())return;
@@ -125,18 +135,15 @@ protected:
         qreal Amplitude=1.0;//抖动幅度
         qreal Frequency=0.4;//抖动频率
         qreal seconds=positionMS/1000.0;
-        qreal round=2.0*3.1415926*Frequency*seconds;
+        qreal round=2.0*3.1415926*Frequency*seconds;//抖动周期模拟
         if(Block)
         {
-
             for(int i=0;i<std::min(visibleLyric,static_cast<int>(Block->size()));++i)
             {
-                const qreal FadeTime=300;//淡入持续时间
                 const qreal elapsedMS=positionMS-(*Block)[i].startMS;//相对字块经过时间
                 QString NowBlock="";
                 if(i>0)NowBlock=L_text.mid((*Block)[i-1].end,(*Block)[i].end-(*Block)[i-1].end);
                 else NowBlock=L_text.mid(0,(*Block)[i].end);
-
                 for(int j=0;j<NowBlock.size();++j)
                 {
                     qreal floatX=0,floatY=0,Opacity=0;
@@ -148,7 +155,8 @@ protected:
                     if(i>0)floatX=Amplitude*std::sin(round+Xlitter[(*Block)[i-1].end+j]);
                     else floatX=Amplitude*std::sin(round+Xlitter[j]);
                     }
-                    if(setopacity)Opacity=std::clamp<qreal>(elapsedMS*(NowBlock.size()-j)/FadeTime,0,1);//逐字淡入不透明度
+                    if(setopacity)Opacity=std::clamp<qreal>(elapsedMS/FadeTime,0,1);//逐字淡入不透明度
+                    if(positionMS-(*Block)[visibleLyric-1].startMS>7000)Opacity=0;
                     QString Nowchar=NowBlock.at(j);
                     const int CharX=fm.horizontalAdvance(Nowchar);//取得单字长度数据
                     QRect NowRect(X,Y,CharX,totalY);//内层字体旋转回调
@@ -181,11 +189,11 @@ protected:
         }
         else if(!Line.Context.isEmpty())
         {
+            FadeTime=300;
             Block=nullptr;
             int k=0;
             for(int i=0;i<Line.block;++i)
             {
-                const qreal FadeTime=300;//淡入持续时间
                 QString NowBlock="";
                 bool flag=0;
                 for(int j=0;j<Line.word[i].size();++j)
@@ -198,12 +206,12 @@ protected:
                         floatY=Amplitude*std::sin(round+Ylitter[k]);
                         floatX=Amplitude*std::sin(round+Xlitter[k]);
                     }
-                    if(positionMS-Line.wordstartMS[i]<0)
+                    if(visibleLyric>0 &&positionMS-Line.wordstartMS[i]+FadeTime<0)
                     {
                         flag=1;
                         break;
                     }
-                    if(setopacity)Opacity=std::clamp<qreal>((positionMS-Line.wordstartMS[i])*(Line.word[i].size()-j)/FadeTime,0,1);//逐字淡入不透明度
+                    if(setopacity)Opacity=std::clamp<qreal>((positionMS-Line.wordstartMS[i]+FadeTime)/FadeTime,0,1);//逐字淡入不透明度
                     QString Nowchar=Line.word[i].at(j);
                     const int CharX=fm.horizontalAdvance(Nowchar);//取得单字长度数据
                     QRect NowRect(X,Y,CharX,totalY);//内层字体旋转回调
